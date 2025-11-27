@@ -1,0 +1,20 @@
+{
+  "name": "mini-ci-cd-project",
+  "version": "1.0.0",
+  "description": "AWS DevOps CI/CD Project - Task Management Application",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "install:all": "npm install && cd server && npm install && cd ../client && npm install",
+    "dev:server": "cd server && npm run dev",
+    "dev:client": "cd client && npm start",
+    "build": "cd client && npm run build",
+    "start": "cd server && npm start"
+  },
+  "keywords": ["aws", "devops", "cicd", "react", "express", "postgresql"],
+  "author": "hamza el-alamy",
+  "license": "ISC",
+  "type": "commonjs"
+}

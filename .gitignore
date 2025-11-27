@@ -1,0 +1,29 @@
+﻿# AWS
+*.pem
+.aws/
+
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn.lock
+package-lock.json
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+build/
+dist/
+
+# Environment
+.env
+.env.local
+
+# Logs
+*.log
+logs/
