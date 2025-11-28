@@ -178,7 +178,7 @@ Resources:
   DBInstance:
     Type: AWS::EC2::Instance
     Properties:
-      InstanceType: t2.micro
+      InstanceType: t3.micro
       KeyName: !Ref KeyName
       SubnetId: !Ref PrivateSubnet
       SecurityGroupIds:
@@ -231,7 +231,7 @@ Resources:
     Type: AWS::EC2::Instance
     DependsOn: DBInstance
     Properties:
-      InstanceType: t2.small
+      InstanceType: t3.small
       KeyName: !Ref KeyName
       SubnetId: !Ref PublicSubnet
       SecurityGroupIds:

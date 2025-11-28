@@ -35,7 +35,7 @@ Resources:
   TestInstance:
     Type: AWS::EC2::Instance
     Properties:
-      InstanceType: t2.micro
+      InstanceType: t3.micro
       KeyName: !Ref KeyName
       SubnetId: !Ref TestSubnet
       SecurityGroupIds:
