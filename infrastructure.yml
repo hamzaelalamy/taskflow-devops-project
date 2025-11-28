@@ -1,11 +1,11 @@
-AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Mini CI/CD Project - VPC, EC2 WebApp (React+Express), EC2 DB (PostgreSQL), CloudWatch, SNS'
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Mini CI/CD Project - VPC, EC2 WebApp (React+Express), EC2 DB (PostgreSQL), CloudWatch, SNS"
 
 Parameters:
   KeyName:
     Description: EC2 Key Pair for SSH access
     Type: AWS::EC2::KeyPair::KeyName
-  
+
   EmailAddress:
     Description: Email for SNS notifications
     Type: String
@@ -48,7 +48,7 @@ Resources:
     Properties:
       VpcId: !Ref ProjectVPC
       CidrBlock: 10.0.1.0/24
-      AvailabilityZone: !Select [0, !GetAZs '']
+      AvailabilityZone: !Select [0, !GetAZs ""]
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
@@ -60,7 +60,7 @@ Resources:
     Properties:
       VpcId: !Ref ProjectVPC
       CidrBlock: 10.0.2.0/24
-      AvailabilityZone: !Select [0, !GetAZs '']
+      AvailabilityZone: !Select [0, !GetAZs ""]
       Tags:
         - Key: Name
           Value: PrivateSubnet
@@ -156,7 +156,7 @@ Resources:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
-        Version: '2012-10-17'
+        Version: "2012-10-17"
         Statement:
           - Effect: Allow
             Principal:
@@ -183,40 +183,48 @@ Resources:
       SubnetId: !Ref PrivateSubnet
       SecurityGroupIds:
         - !Ref DBSecurityGroup
-      ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}'
+      ImageId: !Sub "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}"
       IamInstanceProfile: !Ref EC2InstanceProfile
       UserData:
         Fn::Base64: !Sub |
-          #!/bin/bash
+          #!/bin/bash -xe
+          exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+
+          echo "Starting database setup..."
           yum update -y
+
+          # Install PostgreSQL 14
           amazon-linux-extras install postgresql14 -y
           yum install -y postgresql-server postgresql-contrib
-          
+
           # Initialize PostgreSQL
-          postgresql-setup initdb
-          
+          /usr/bin/postgresql-setup --initdb
+
           # Configure PostgreSQL to accept connections
           sed -i "s/#listen_addresses = 'localhost'/listen_addresses = '*'/" /var/lib/pgsql/data/postgresql.conf
           echo "host all all 10.0.0.0/16 md5" >> /var/lib/pgsql/data/pg_hba.conf
-          
+
           # Start PostgreSQL
           systemctl start postgresql
           systemctl enable postgresql
-          
-          # Wait for PostgreSQL to start
-          sleep 10
-          
+
+          # Wait for PostgreSQL to be ready
+          sleep 15
+
           # Create database and user
           sudo -u postgres psql <<EOF
           CREATE DATABASE taskflow_db;
           CREATE USER taskflow_user WITH ENCRYPTED PASSWORD '${DBPassword}';
           GRANT ALL PRIVILEGES ON DATABASE taskflow_db TO taskflow_user;
-          \c taskflow_db
+          ALTER DATABASE taskflow_db OWNER TO taskflow_user;
+          EOF
+
+          # Connect to the database and grant schema privileges
+          sudo -u postgres psql -d taskflow_db <<EOF
           GRANT ALL ON SCHEMA public TO taskflow_user;
           EOF
-      Tags:
-        - Key: Name
-          Value: DBInstance
+
+          echo "Database setup completed successfully"
 
   # WebApp EC2 Instance (Public) - Node.js + React
   WebAppInstance:
@@ -228,39 +236,39 @@ Resources:
       SubnetId: !Ref PublicSubnet
       SecurityGroupIds:
         - !Ref WebAppSecurityGroup
-      ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}'
+      ImageId: !Sub "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}"
       IamInstanceProfile: !Ref EC2InstanceProfile
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash
           yum update -y
-          
+
           # Install Node.js 18
-          curl -sL https://rpm.nodesource.com/setup_18.x | bash -
+          curl -sL https://rpm.nodesource.com/setup_22.x | bash -
           yum install -y nodejs git
-          
+
           # Install PM2 for process management
           npm install -g pm2
-          
+
           # Install Nginx
           amazon-linux-extras install nginx1 -y
-          
+
           # Create app directory
           mkdir -p /opt/webapp
           cd /opt/webapp
-          
+
           # Clone or create app (will be done via GitHub Actions)
           # For now, create placeholder that GitHub Actions will replace
-          
+
           cat > /opt/webapp/deploy.sh <<'DEPLOYEOF'
           #!/bin/bash
           cd /opt/webapp
-          
+
           # Install dependencies
           if [ -f "package.json" ]; then
             npm install
           fi
-          
+
           # Build frontend if exists
           if [ -d "client" ]; then
             cd client
@@ -268,16 +276,16 @@ Resources:
             npm run build
             cd ..
           fi
-          
+
           # Start backend with PM2
           pm2 delete taskflow-api 2>/dev/null || true
           pm2 start server/index.js --name taskflow-api
           pm2 save
           pm2 startup systemd -u root --hp /root
           DEPLOYEOF
-          
+
           chmod +x /opt/webapp/deploy.sh
-          
+
           # Configure Nginx as reverse proxy
           cat > /etc/nginx/conf.d/webapp.conf <<'NGINXEOF'
           server {
@@ -301,10 +309,10 @@ Resources:
               }
           }
           NGINXEOF
-          
+
           systemctl start nginx
           systemctl enable nginx
-          
+
           # Set environment variables
           cat > /opt/webapp/.env <<ENVEOF
           DB_HOST=${DBInstance.PrivateIp}
@@ -315,11 +323,11 @@ Resources:
           NODE_ENV=production
           PORT=3000
           ENVEOF
-          
+
           # Install CloudWatch agent
           wget https://s3.amazonaws.com/amazoncloudwatch-agent/amazon_linux/amd64/latest/amazon-cloudwatch-agent.rpm
           rpm -U ./amazon-cloudwatch-agent.rpm
-          
+
           # Configure CloudWatch agent
           cat > /opt/aws/amazon-cloudwatch-agent/etc/config.json <<'CWEOF'
           {
@@ -359,23 +367,13 @@ Resources:
             }
           }
           CWEOF
-          
+
           /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
             -a fetch-config -m ec2 -s \
             -c file:/opt/aws/amazon-cloudwatch-agent/etc/config.json
       Tags:
         - Key: Name
           Value: WebAppInstance
-
-  # Elastic IP for WebApp
-  WebAppEIP:
-    Type: AWS::EC2::EIP
-    Properties:
-      Domain: vpc
-      InstanceId: !Ref WebAppInstance
-      Tags:
-        - Key: Name
-          Value: WebApp-EIP
 
   # SNS Topic for Alerts
   AlertTopic:
@@ -431,17 +429,13 @@ Resources:
 Outputs:
   WebAppURL:
     Description: WebApp Public URL
-    Value: !Sub 'http://${WebAppEIP}'
+    Value: !Sub "http://${WebAppInstance.PublicIp}"
     Export:
       Name: WebAppURL
 
   WebAppPublicIP:
-    Description: WebApp Public IP (Elastic IP)
-    Value: !Ref WebAppEIP
-
-  WebAppElasticIPAllocation:
-    Description: Elastic IP Allocation ID
-    Value: !GetAtt WebAppEIP.AllocationId
+    Description: WebApp Public IP
+    Value: !GetAtt WebAppInstance.PublicIp
 
   DBPrivateIP:
     Description: Database Private IP
