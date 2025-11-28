@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Mini CI/CD Project - VPC, EC2 WebApp (React+Express), EC2 DB (PostgreSQL), CloudWatch, SNS'
+Description: 'Mini CI/CD Project - VPC, EC2 WebApp (React+Express), EC2 DB (PostgreSQL), CloudWatch, SNS - Amazon Linux 2023'
 
 Parameters:
   KeyName:
@@ -9,7 +9,7 @@ Parameters:
   EmailAddress:
     Description: Email for SNS notifications
     Type: String
-
+  
   DBPassword:
     Description: Database password
     Type: String
@@ -183,28 +183,28 @@ Resources:
       SubnetId: !Ref PrivateSubnet
       SecurityGroupIds:
         - !Ref DBSecurityGroup
-      ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}'
+      ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}'
       IamInstanceProfile: !Ref EC2InstanceProfile
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash -xe
           exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+          
           echo "========================================="
           echo "Starting Database Setup - $(date)"
           echo "========================================="
           
           # Update system
           echo "[1/6] Updating system packages..."
-          yum update -y || { echo "ERROR: Failed to update system"; exit 1; }
+          dnf update -y || { echo "ERROR: Failed to update system"; exit 1; }
           
-          # Install PostgreSQL 13 (stable version for Amazon Linux 2)
-          echo "[2/6] Installing PostgreSQL 13..."
-          amazon-linux-extras install postgresql13 -y || { echo "ERROR: Failed to install PostgreSQL extras"; exit 1; }
-          yum install -y postgresql-server postgresql-contrib || { echo "ERROR: Failed to install PostgreSQL"; exit 1; }
+          # Install PostgreSQL 15 (available in AL2023)
+          echo "[2/6] Installing PostgreSQL 15..."
+          dnf install -y postgresql15 postgresql15-server || { echo "ERROR: Failed to install PostgreSQL"; exit 1; }
           
           # Initialize PostgreSQL
           echo "[3/6] Initializing PostgreSQL..."
-          /usr/bin/postgresql-setup --initdb || { echo "ERROR: Failed to initialize PostgreSQL"; exit 1; }
+          postgresql-setup --initdb || { echo "ERROR: Failed to initialize PostgreSQL"; exit 1; }
           
           # Configure PostgreSQL
           echo "[4/6] Configuring PostgreSQL..."
@@ -226,12 +226,16 @@ Resources:
           CREATE DATABASE taskflow_db;
           CREATE USER taskflow_user WITH ENCRYPTED PASSWORD '${DBPassword}';
           GRANT ALL PRIVILEGES ON DATABASE taskflow_db TO taskflow_user;
+          ALTER DATABASE taskflow_db OWNER TO taskflow_user;
           \c taskflow_db
           GRANT ALL ON SCHEMA public TO taskflow_user;
           EOF
           
           echo "========================================="
           echo "✅ Database Setup Complete - $(date)"
+          echo "PostgreSQL version: $(psql --version)"
+          echo "Database: taskflow_db"
+          echo "User: taskflow_user"
           echo "========================================="
       Tags:
         - Key: Name
@@ -242,113 +246,70 @@ Resources:
     Type: AWS::EC2::Instance
     DependsOn: DBInstance
     Properties:
-      InstanceType: t3.small
+      InstanceType: t3.micro
       KeyName: !Ref KeyName
       SubnetId: !Ref PublicSubnet
       SecurityGroupIds:
         - !Ref WebAppSecurityGroup
-      ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}'
+      ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}'
       IamInstanceProfile: !Ref EC2InstanceProfile
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash -xe
           exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+          
           echo "========================================="
           echo "Starting WebApp Setup - $(date)"
           echo "========================================="
           
           # Update system
-          echo "[1/9] Updating system packages..."
-          yum update -y || { echo "ERROR: Failed to update system"; exit 1; }
+          echo "[1/8] Updating system packages..."
+          dnf update -y || { echo "ERROR: Failed to update system"; exit 1; }
           
           # Install Git
-          echo "[2/9] Installing Git..."
-          yum install -y git || { echo "ERROR: Failed to install Git"; exit 1; }
-          git --version || { echo "ERROR: Git installation verification failed"; exit 1; }
-          echo "✅ Git $(git --version) installed successfully"
+          echo "[2/8] Installing Git..."
+          dnf install -y git || { echo "ERROR: Failed to install Git"; exit 1; }
+          git --version
+          echo "✅ Git installed successfully"
           
-          # Install Node.js via NVM (Node Version Manager)
-          echo "[3/9] Installing NVM and Node.js..."
-          
-          # Install NVM as root
-          export HOME=/root
-          curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
-          
-          # Load NVM immediately in this script
-          export NVM_DIR="/root/.nvm"
-          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-          
-          # Install Node.js 20 LTS
-          nvm install 20
-          nvm use 20
-          nvm alias default 20
-          
-          # Create symlinks to make node and npm available system-wide
-          ln -sf $(which node) /usr/local/bin/node
-          ln -sf $(which npm) /usr/local/bin/npm
+          # Install Node.js 20 (AL2023 supports it natively)
+          echo "[3/8] Installing Node.js 20..."
+          dnf install -y nodejs npm || { echo "ERROR: Failed to install Node.js"; exit 1; }
           
           # Verify Node.js installation
-          /usr/local/bin/node --version || { echo "ERROR: Node.js installation verification failed"; exit 1; }
-          /usr/local/bin/npm --version || { echo "ERROR: NPM installation verification failed"; exit 1; }
-          echo "✅ Node.js $(/usr/local/bin/node --version) and NPM $(/usr/local/bin/npm --version) installed successfully"
-          
-          # Setup NVM for ec2-user
-          export HOME=/home/ec2-user
-          sudo -u ec2-user bash -c 'curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash'
-          
-          # Install Node.js for ec2-user
-          sudo -u ec2-user bash -c '
-            export NVM_DIR="/home/ec2-user/.nvm"
-            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-            nvm install 20
-            nvm use 20
-            nvm alias default 20
-          '
-          
-          echo "✅ NVM configured for both root and ec2-user"
+          node --version || { echo "ERROR: Node.js installation failed"; exit 1; }
+          npm --version || { echo "ERROR: NPM installation failed"; exit 1; }
+          echo "✅ Node.js $(node --version) and NPM $(npm --version) installed successfully"
           
           # Install PM2 globally
-          echo "[4/9] Installing PM2 process manager..."
-          /usr/local/bin/npm install -g pm2 || { echo "ERROR: Failed to install PM2"; exit 1; }
-          
-          # Create symlink for PM2
-          ln -sf /root/.nvm/versions/node/*/bin/pm2 /usr/local/bin/pm2
-          
-          /usr/local/bin/pm2 --version || { echo "ERROR: PM2 installation verification failed"; exit 1; }
-          echo "✅ PM2 $(/usr/local/bin/pm2 --version) installed successfully"
+          echo "[4/8] Installing PM2..."
+          npm install -g pm2 || { echo "ERROR: Failed to install PM2"; exit 1; }
+          pm2 --version || { echo "ERROR: PM2 installation failed"; exit 1; }
+          echo "✅ PM2 $(pm2 --version) installed successfully"
           
           # Install Nginx
-          echo "[5/9] Installing Nginx..."
-          amazon-linux-extras install nginx1 -y || { echo "ERROR: Failed to install Nginx"; exit 1; }
-          nginx -v || { echo "ERROR: Nginx installation verification failed"; exit 1; }
+          echo "[5/8] Installing Nginx..."
+          dnf install -y nginx || { echo "ERROR: Failed to install Nginx"; exit 1; }
+          nginx -v
           echo "✅ Nginx installed successfully"
           
           # Create app directory
-          echo "[6/9] Creating application directory..."
+          echo "[6/8] Creating application directory..."
           mkdir -p /opt/webapp
           chown -R ec2-user:ec2-user /opt/webapp
           
           # Create deployment script
-          echo "[7/9] Creating deployment script..."
           cat > /opt/webapp/deploy.sh <<'DEPLOYEOF'
           #!/bin/bash -e
-          
-          # Load NVM
-          export NVM_DIR="$HOME/.nvm"
-          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-          
           cd /opt/webapp
-          
           echo "🚀 Starting deployment..."
           
-          # Verify Node.js is available
-          node --version || { echo "ERROR: Node.js not found"; exit 1; }
-          npm --version || { echo "ERROR: NPM not found"; exit 1; }
-          
-          # Install root dependencies
-          if [ -f "package.json" ]; then
-            echo "Installing root dependencies..."
-            npm install
+          # Install backend dependencies
+          if [ -d "server" ]; then
+            echo "Installing backend dependencies..."
+            cd server
+            npm install --production
+            cd ..
           fi
           
           # Install and build frontend
@@ -358,14 +319,6 @@ Resources:
             npm install
             npm run build
             echo "✅ Frontend built successfully"
-            cd ..
-          fi
-          
-          # Install backend dependencies
-          if [ -d "server" ]; then
-            echo "Installing backend dependencies..."
-            cd server
-            npm install --production
             cd ..
           fi
           
@@ -384,13 +337,13 @@ Resources:
           echo "✅ Deployment script created"
           
           # Configure Nginx
-          echo "[8/9] Configuring Nginx..."
+          echo "[7/8] Configuring Nginx..."
           cat > /etc/nginx/conf.d/webapp.conf <<'NGINXEOF'
           server {
               listen 80;
               server_name _;
               
-              # Serve React frontend (build directory for create-react-app)
+              # Serve React frontend
               location / {
                   root /opt/webapp/client/build;
                   try_files $uri $uri/ /index.html;
@@ -418,7 +371,7 @@ Resources:
           echo "✅ Nginx configured and started"
           
           # Create environment file
-          echo "[9/9] Creating environment configuration..."
+          echo "[8/8] Creating environment configuration..."
           cat > /opt/webapp/.env <<ENVEOF
           DB_HOST=${DBInstance.PrivateIp}
           DB_PORT=5432
@@ -430,17 +383,11 @@ Resources:
           ENVEOF
           
           chown ec2-user:ec2-user /opt/webapp/.env
-          chmod 600 /opt/webapp/.env
           echo "✅ Environment file created"
-          
-          # Install PostgreSQL client for testing DB connection
-          echo "Installing PostgreSQL client..."
-          amazon-linux-extras install postgresql13 -y
           
           # Install CloudWatch agent
           echo "Installing CloudWatch agent..."
-          wget https://s3.amazonaws.com/amazoncloudwatch-agent/amazon_linux/amd64/latest/amazon-cloudwatch-agent.rpm || { echo "ERROR: Failed to download CloudWatch agent"; exit 1; }
-          rpm -U ./amazon-cloudwatch-agent.rpm || { echo "ERROR: Failed to install CloudWatch agent"; exit 1; }
+          dnf install -y amazon-cloudwatch-agent || { echo "ERROR: Failed to install CloudWatch agent"; exit 1; }
           
           # Configure CloudWatch agent
           cat > /opt/aws/amazon-cloudwatch-agent/etc/config.json <<'CWEOF'
@@ -491,22 +438,21 @@ Resources:
           /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
             -a fetch-config -m ec2 -s \
             -c file:/opt/aws/amazon-cloudwatch-agent/etc/config.json || { echo "ERROR: Failed to start CloudWatch agent"; exit 1; }
-          
           echo "✅ CloudWatch agent configured and started"
           
           echo "========================================="
           echo "✅ WebApp Setup Complete - $(date)"
           echo "========================================="
-          echo "📦 Node.js version: $(/usr/local/bin/node --version)"
-          echo "📦 NPM version: $(/usr/local/bin/npm --version)"
-          echo "📦 PM2 version: $(/usr/local/bin/pm2 --version)"
+          echo "📦 Node.js version: $(node --version)"
+          echo "📦 NPM version: $(npm --version)"
+          echo "📦 PM2 version: $(pm2 --version)"
           echo "📦 Git version: $(git --version)"
           echo "📦 Nginx version: $(nginx -v 2>&1)"
           echo "========================================="
           echo "🎯 Next steps:"
-          echo "   1. SSH to instance: ssh -i taskflow-key.pem ec2-user@<IP>"
-          echo "   2. Clone your repo: cd /opt/webapp && git clone <repo-url> ."
-          echo "   3. Deploy app: ./deploy.sh"
+          echo "  1. SSH to instance: ssh -i taskflow-key.pem ec2-user@\$PUBLIC_IP"
+          echo "  2. Clone your repo: cd /opt/webapp && git clone <YOUR_REPO> ."
+          echo "  3. Deploy app: ./deploy.sh"
           echo "========================================="
       Tags:
         - Key: Name
