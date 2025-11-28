@@ -268,40 +268,54 @@ Resources:
           echo "✅ Git $(git --version) installed successfully"
           
           # Install Node.js via NVM (Node Version Manager)
-          echo "[3/9] Installing NVM (Node Version Manager)..."
-          curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash || { echo "ERROR: Failed to install NVM"; exit 1; }
+          echo "[3/9] Installing NVM and Node.js..."
           
-          # Load NVM into current shell
-          export NVM_DIR="$HOME/.nvm"
+          # Install NVM as root
+          export HOME=/root
+          curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
+          
+          # Load NVM immediately in this script
+          export NVM_DIR="/root/.nvm"
           [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
           
           # Install Node.js 20 LTS
-          echo "Installing Node.js 20 LTS via NVM..."
-          nvm install 20 || { echo "ERROR: Failed to install Node.js"; exit 1; }
+          nvm install 20
           nvm use 20
           nvm alias default 20
           
+          # Create symlinks to make node and npm available system-wide
+          ln -sf $(which node) /usr/local/bin/node
+          ln -sf $(which npm) /usr/local/bin/npm
+          
           # Verify Node.js installation
-          node --version || { echo "ERROR: Node.js installation verification failed"; exit 1; }
-          npm --version || { echo "ERROR: NPM installation verification failed"; exit 1; }
-          echo "✅ Node.js $(node --version) and NPM $(npm --version) installed successfully"
+          /usr/local/bin/node --version || { echo "ERROR: Node.js installation verification failed"; exit 1; }
+          /usr/local/bin/npm --version || { echo "ERROR: NPM installation verification failed"; exit 1; }
+          echo "✅ Node.js $(/usr/local/bin/node --version) and NPM $(/usr/local/bin/npm --version) installed successfully"
           
-          # Make NVM available for ec2-user
-          cp -r /root/.nvm /home/ec2-user/.nvm
-          chown -R ec2-user:ec2-user /home/ec2-user/.nvm
+          # Setup NVM for ec2-user
+          export HOME=/home/ec2-user
+          sudo -u ec2-user bash -c 'curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash'
           
-          # Add NVM to ec2-user's bashrc if not already there
-          if ! grep -q 'NVM_DIR' /home/ec2-user/.bashrc; then
-            echo 'export NVM_DIR="$HOME/.nvm"' >> /home/ec2-user/.bashrc
-            echo '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >> /home/ec2-user/.bashrc
-            echo '[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"' >> /home/ec2-user/.bashrc
-          fi
+          # Install Node.js for ec2-user
+          sudo -u ec2-user bash -c '
+            export NVM_DIR="/home/ec2-user/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+            nvm install 20
+            nvm use 20
+            nvm alias default 20
+          '
+          
+          echo "✅ NVM configured for both root and ec2-user"
           
           # Install PM2 globally
           echo "[4/9] Installing PM2 process manager..."
-          npm install -g pm2 || { echo "ERROR: Failed to install PM2"; exit 1; }
-          pm2 --version || { echo "ERROR: PM2 installation verification failed"; exit 1; }
-          echo "✅ PM2 $(pm2 --version) installed successfully"
+          /usr/local/bin/npm install -g pm2 || { echo "ERROR: Failed to install PM2"; exit 1; }
+          
+          # Create symlink for PM2
+          ln -sf /root/.nvm/versions/node/*/bin/pm2 /usr/local/bin/pm2
+          
+          /usr/local/bin/pm2 --version || { echo "ERROR: PM2 installation verification failed"; exit 1; }
+          echo "✅ PM2 $(/usr/local/bin/pm2 --version) installed successfully"
           
           # Install Nginx
           echo "[5/9] Installing Nginx..."
@@ -483,9 +497,9 @@ Resources:
           echo "========================================="
           echo "✅ WebApp Setup Complete - $(date)"
           echo "========================================="
-          echo "📦 Node.js version: $(node --version)"
-          echo "📦 NPM version: $(npm --version)"
-          echo "📦 PM2 version: $(pm2 --version)"
+          echo "📦 Node.js version: $(/usr/local/bin/node --version)"
+          echo "📦 NPM version: $(/usr/local/bin/npm --version)"
+          echo "📦 PM2 version: $(/usr/local/bin/pm2 --version)"
           echo "📦 Git version: $(git --version)"
           echo "📦 Nginx version: $(nginx -v 2>&1)"
           echo "========================================="
