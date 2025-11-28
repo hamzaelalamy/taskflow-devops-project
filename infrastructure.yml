@@ -1,0 +1,458 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Mini CI/CD Project - VPC, EC2 WebApp (React+Express), EC2 DB (PostgreSQL), CloudWatch, SNS'
+
+Parameters:
+  KeyName:
+    Description: EC2 Key Pair for SSH access
+    Type: AWS::EC2::KeyPair::KeyName
+  
+  EmailAddress:
+    Description: Email for SNS notifications
+    Type: String
+
+  DBPassword:
+    Description: Database password
+    Type: String
+    NoEcho: true
+    MinLength: 8
+
+Resources:
+  # VPC Configuration
+  ProjectVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: ProjectVPC
+
+  # Internet Gateway
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: ProjectIGW
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref ProjectVPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # Public Subnet
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ProjectVPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: PublicSubnet
+
+  # Private Subnet
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ProjectVPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: PrivateSubnet
+
+  # Public Route Table
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref ProjectVPC
+      Tags:
+        - Key: Name
+          Value: PublicRouteTable
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  # Private Route Table
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref ProjectVPC
+      Tags:
+        - Key: Name
+          Value: PrivateRouteTable
+
+  PrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet
+      RouteTableId: !Ref PrivateRouteTable
+
+  # Security Group for WebApp (Public)
+  WebAppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP and SSH
+      VpcId: !Ref ProjectVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: WebAppSG
+
+  # Security Group for Database (Private)
+  DBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow PostgreSQL from WebApp only
+      VpcId: !Ref ProjectVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref WebAppSecurityGroup
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          SourceSecurityGroupId: !Ref WebAppSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: DBSG
+
+  # IAM Role for EC2 CloudWatch
+  EC2CloudWatchRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Tags:
+        - Key: Name
+          Value: EC2CloudWatchRole
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2CloudWatchRole
+
+  # Database EC2 Instance (Private) - PostgreSQL
+  DBInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      KeyName: !Ref KeyName
+      SubnetId: !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref DBSecurityGroup
+      ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}'
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          amazon-linux-extras install postgresql14 -y
+          yum install -y postgresql-server postgresql-contrib
+          
+          # Initialize PostgreSQL
+          postgresql-setup initdb
+          
+          # Configure PostgreSQL to accept connections
+          sed -i "s/#listen_addresses = 'localhost'/listen_addresses = '*'/" /var/lib/pgsql/data/postgresql.conf
+          echo "host all all 10.0.0.0/16 md5" >> /var/lib/pgsql/data/pg_hba.conf
+          
+          # Start PostgreSQL
+          systemctl start postgresql
+          systemctl enable postgresql
+          
+          # Wait for PostgreSQL to start
+          sleep 10
+          
+          # Create database and user
+          sudo -u postgres psql <<EOF
+          CREATE DATABASE taskflow_db;
+          CREATE USER taskflow_user WITH ENCRYPTED PASSWORD '${DBPassword}';
+          GRANT ALL PRIVILEGES ON DATABASE taskflow_db TO taskflow_user;
+          \c taskflow_db
+          GRANT ALL ON SCHEMA public TO taskflow_user;
+          EOF
+      Tags:
+        - Key: Name
+          Value: DBInstance
+
+  # WebApp EC2 Instance (Public) - Node.js + React
+  WebAppInstance:
+    Type: AWS::EC2::Instance
+    DependsOn: DBInstance
+    Properties:
+      InstanceType: t2.small
+      KeyName: !Ref KeyName
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds:
+        - !Ref WebAppSecurityGroup
+      ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}'
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          
+          # Install Node.js 18
+          curl -sL https://rpm.nodesource.com/setup_18.x | bash -
+          yum install -y nodejs git
+          
+          # Install PM2 for process management
+          npm install -g pm2
+          
+          # Install Nginx
+          amazon-linux-extras install nginx1 -y
+          
+          # Create app directory
+          mkdir -p /opt/webapp
+          cd /opt/webapp
+          
+          # Clone or create app (will be done via GitHub Actions)
+          # For now, create placeholder that GitHub Actions will replace
+          
+          cat > /opt/webapp/deploy.sh <<'DEPLOYEOF'
+          #!/bin/bash
+          cd /opt/webapp
+          
+          # Install dependencies
+          if [ -f "package.json" ]; then
+            npm install
+          fi
+          
+          # Build frontend if exists
+          if [ -d "client" ]; then
+            cd client
+            npm install
+            npm run build
+            cd ..
+          fi
+          
+          # Start backend with PM2
+          pm2 delete taskflow-api 2>/dev/null || true
+          pm2 start server/index.js --name taskflow-api
+          pm2 save
+          pm2 startup systemd -u root --hp /root
+          DEPLOYEOF
+          
+          chmod +x /opt/webapp/deploy.sh
+          
+          # Configure Nginx as reverse proxy
+          cat > /etc/nginx/conf.d/webapp.conf <<'NGINXEOF'
+          server {
+              listen 80;
+              server_name _;
+              
+              # Serve React frontend
+              location / {
+                  root /opt/webapp/client/build;
+                  try_files $uri $uri/ /index.html;
+              }
+              
+              # Proxy API requests to Express
+              location /api {
+                  proxy_pass http://localhost:3000;
+                  proxy_http_version 1.1;
+                  proxy_set_header Upgrade $http_upgrade;
+                  proxy_set_header Connection 'upgrade';
+                  proxy_set_header Host $host;
+                  proxy_cache_bypass $http_upgrade;
+              }
+          }
+          NGINXEOF
+          
+          systemctl start nginx
+          systemctl enable nginx
+          
+          # Set environment variables
+          cat > /opt/webapp/.env <<ENVEOF
+          DB_HOST=${DBInstance.PrivateIp}
+          DB_PORT=5432
+          DB_NAME=taskflow_db
+          DB_USER=taskflow_user
+          DB_PASSWORD=${DBPassword}
+          NODE_ENV=production
+          PORT=3000
+          ENVEOF
+          
+          # Install CloudWatch agent
+          wget https://s3.amazonaws.com/amazoncloudwatch-agent/amazon_linux/amd64/latest/amazon-cloudwatch-agent.rpm
+          rpm -U ./amazon-cloudwatch-agent.rpm
+          
+          # Configure CloudWatch agent
+          cat > /opt/aws/amazon-cloudwatch-agent/etc/config.json <<'CWEOF'
+          {
+            "logs": {
+              "logs_collected": {
+                "files": {
+                  "collect_list": [
+                    {
+                      "file_path": "/var/log/nginx/access.log",
+                      "log_group_name": "/aws/ec2/webapp",
+                      "log_stream_name": "{instance_id}/nginx-access"
+                    },
+                    {
+                      "file_path": "/var/log/nginx/error.log",
+                      "log_group_name": "/aws/ec2/webapp",
+                      "log_stream_name": "{instance_id}/nginx-error"
+                    }
+                  ]
+                }
+              }
+            },
+            "metrics": {
+              "namespace": "WebApp/Performance",
+              "metrics_collected": {
+                "cpu": {
+                  "measurement": [
+                    {"name": "cpu_usage_idle", "rename": "CPU_IDLE", "unit": "Percent"}
+                  ],
+                  "totalcpu": false
+                },
+                "mem": {
+                  "measurement": [
+                    {"name": "mem_used_percent", "rename": "MEM_USED", "unit": "Percent"}
+                  ]
+                }
+              }
+            }
+          }
+          CWEOF
+          
+          /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+            -a fetch-config -m ec2 -s \
+            -c file:/opt/aws/amazon-cloudwatch-agent/etc/config.json
+      Tags:
+        - Key: Name
+          Value: WebAppInstance
+
+  # Elastic IP for WebApp
+  WebAppEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref WebAppInstance
+      Tags:
+        - Key: Name
+          Value: WebApp-EIP
+
+  # SNS Topic for Alerts
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: WebApp-Alerts
+      Subscription:
+        - Endpoint: !Ref EmailAddress
+          Protocol: email
+
+  # CloudWatch Alarm - High CPU
+  HighCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: WebApp-High-CPU
+      AlarmDescription: Alert when CPU exceeds 70%
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 70
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref WebAppInstance
+      AlarmActions:
+        - !Ref AlertTopic
+
+  # CloudWatch Alarm - High Memory
+  HighMemoryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: WebApp-High-Memory
+      AlarmDescription: Alert when memory usage exceeds 80%
+      MetricName: MEM_USED
+      Namespace: WebApp/Performance
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AlertTopic
+
+  # CloudWatch Log Group
+  WebAppLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/ec2/webapp
+      RetentionInDays: 7
+
+Outputs:
+  WebAppURL:
+    Description: WebApp Public URL
+    Value: !Sub 'http://${WebAppEIP}'
+    Export:
+      Name: WebAppURL
+
+  WebAppPublicIP:
+    Description: WebApp Public IP (Elastic IP)
+    Value: !Ref WebAppEIP
+
+  WebAppElasticIPAllocation:
+    Description: Elastic IP Allocation ID
+    Value: !GetAtt WebAppEIP.AllocationId
+
+  DBPrivateIP:
+    Description: Database Private IP
+    Value: !GetAtt DBInstance.PrivateIp
+
+  SNSTopicARN:
+    Description: SNS Topic ARN for alerts
+    Value: !Ref AlertTopic
+
+  VPCId:
+    Description: VPC ID
+    Value: !Ref ProjectVPC
+    Export:
+      Name: ProjectVPCId
