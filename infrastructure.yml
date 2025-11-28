@@ -9,12 +9,14 @@ Parameters:
   EmailAddress:
     Description: Email for SNS notifications
     Type: String
+    Default: your-email@example.com
 
   DBPassword:
     Description: Database password
     Type: String
     NoEcho: true
     MinLength: 8
+    Default: MySecurePass123
 
 Resources:
   # VPC Configuration
@@ -178,50 +180,36 @@ Resources:
   DBInstance:
     Type: AWS::EC2::Instance
     Properties:
-      InstanceType: t3.micro
+      InstanceType: t2.micro
       KeyName: !Ref KeyName
       SubnetId: !Ref PrivateSubnet
       SecurityGroupIds:
         - !Ref DBSecurityGroup
-      ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}'
+      ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}'
       IamInstanceProfile: !Ref EC2InstanceProfile
       UserData:
         Fn::Base64: !Sub |
-          #!/bin/bash -xe
-          exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
-          echo "========================================="
-          echo "Starting Database Setup - $(date)"
-          echo "========================================="
-          
-          # Update system
-          echo "[1/6] Updating system packages..."
-          yum update -y || { echo "ERROR: Failed to update system"; exit 1; }
-          
-          # Install PostgreSQL 14
-          echo "[2/6] Installing PostgreSQL 14..."
-          amazon-linux-extras install postgresql14 -y || { echo "ERROR: Failed to install PostgreSQL extras"; exit 1; }
-          yum install -y postgresql-server postgresql-contrib || { echo "ERROR: Failed to install PostgreSQL"; exit 1; }
+          #!/bin/bash
+          yum update -y
+          # Install PostgreSQL 13 (available on Amazon Linux 2)
+          amazon-linux-extras install postgresql13 -y
+          yum install -y postgresql-server postgresql-contrib
           
           # Initialize PostgreSQL
-          echo "[3/6] Initializing PostgreSQL..."
-          /usr/bin/postgresql-setup --initdb || { echo "ERROR: Failed to initialize PostgreSQL"; exit 1; }
+          postgresql-setup initdb
           
-          # Configure PostgreSQL
-          echo "[4/6] Configuring PostgreSQL..."
+          # Configure PostgreSQL to accept connections
           sed -i "s/#listen_addresses = 'localhost'/listen_addresses = '*'/" /var/lib/pgsql/data/postgresql.conf
           echo "host all all 10.0.0.0/16 md5" >> /var/lib/pgsql/data/pg_hba.conf
           
           # Start PostgreSQL
-          echo "[5/6] Starting PostgreSQL service..."
-          systemctl start postgresql || { echo "ERROR: Failed to start PostgreSQL"; exit 1; }
+          systemctl start postgresql
           systemctl enable postgresql
           
-          # Wait for PostgreSQL to be ready
-          echo "[6/6] Waiting for PostgreSQL to be ready..."
-          sleep 15
+          # Wait for PostgreSQL to start
+          sleep 10
           
           # Create database and user
-          echo "Creating database and user..."
           sudo -u postgres psql <<EOF
           CREATE DATABASE taskflow_db;
           CREATE USER taskflow_user WITH ENCRYPTED PASSWORD '${DBPassword}';
@@ -229,10 +217,6 @@ Resources:
           \c taskflow_db
           GRANT ALL ON SCHEMA public TO taskflow_user;
           EOF
-          
-          echo "========================================="
-          echo "✅ Database Setup Complete - $(date)"
-          echo "========================================="
       Tags:
         - Key: Name
           Value: DBInstance
@@ -242,7 +226,7 @@ Resources:
     Type: AWS::EC2::Instance
     DependsOn: DBInstance
     Properties:
-      InstanceType: t3.small
+      InstanceType: t2.small
       KeyName: !Ref KeyName
       SubnetId: !Ref PublicSubnet
       SecurityGroupIds:
@@ -251,107 +235,62 @@ Resources:
       IamInstanceProfile: !Ref EC2InstanceProfile
       UserData:
         Fn::Base64: !Sub |
-          #!/bin/bash -xe
-          exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
-          echo "========================================="
-          echo "Starting WebApp Setup - $(date)"
-          echo "========================================="
+          #!/bin/bash
+          yum update -y
           
-          # Update system
-          echo "[1/9] Updating system packages..."
-          yum update -y || { echo "ERROR: Failed to update system"; exit 1; }
+          # Install Node.js 18
+          curl -sL https://rpm.nodesource.com/setup_18.x | bash -
+          yum install -y nodejs git
           
-          # Install Git
-          echo "[2/9] Installing Git..."
-          yum install -y git || { echo "ERROR: Failed to install Git"; exit 1; }
-          git --version || { echo "ERROR: Git installation verification failed"; exit 1; }
-          echo "✅ Git $(git --version) installed successfully"
-          
-          # Install Node.js 20 LTS using NodeSource (reliable for Amazon Linux 2)
-          echo "[3/9] Installing Node.js 20 LTS via NodeSource..."
-          curl -fsSL https://rpm.nodesource.com/setup_20.x | bash - || { echo "ERROR: Failed to add NodeSource repository"; exit 1; }
-          yum install -y nodejs || { echo "ERROR: Failed to install Node.js"; exit 1; }
-          
-          # Verify Node.js installation
-          node --version || { echo "ERROR: Node.js installation verification failed"; exit 1; }
-          npm --version || { echo "ERROR: NPM installation verification failed"; exit 1; }
-          echo "✅ Node.js $(node --version) and NPM $(npm --version) installed successfully"
-          
-          # Install PM2 globally
-          echo "[4/9] Installing PM2 process manager..."
-          npm install -g pm2 || { echo "ERROR: Failed to install PM2"; exit 1; }
-          pm2 --version || { echo "ERROR: PM2 installation verification failed"; exit 1; }
-          echo "✅ PM2 $(pm2 --version) installed successfully"
+          # Install PM2 for process management
+          npm install -g pm2
           
           # Install Nginx
-          echo "[5/9] Installing Nginx..."
-          amazon-linux-extras install nginx1 -y || { echo "ERROR: Failed to install Nginx"; exit 1; }
-          nginx -v || { echo "ERROR: Nginx installation verification failed"; exit 1; }
-          echo "✅ Nginx installed successfully"
+          amazon-linux-extras install nginx1 -y
           
           # Create app directory
-          echo "[6/9] Creating application directory..."
           mkdir -p /opt/webapp
-          chown -R ec2-user:ec2-user /opt/webapp
-          
-          # Create deployment script
-          echo "[7/9] Creating deployment script..."
-          cat > /opt/webapp/deploy.sh <<'DEPLOYEOF'
-          #!/bin/bash -e
           cd /opt/webapp
           
-          echo "🚀 Starting deployment..."
+          # Clone or create app (will be done via GitHub Actions)
+          # For now, create placeholder that GitHub Actions will replace
           
-          # Install root dependencies
+          cat > /opt/webapp/deploy.sh <<'DEPLOYEOF'
+          #!/bin/bash
+          cd /opt/webapp
+          
+          # Install dependencies
           if [ -f "package.json" ]; then
-            echo "Installing root dependencies..."
             npm install
           fi
           
-          # Install and build frontend
+          # Build frontend if exists
           if [ -d "client" ]; then
-            echo "Building frontend..."
             cd client
             npm install
             npm run build
-            echo "✅ Frontend built successfully"
-            cd ..
-          fi
-          
-          # Install backend dependencies
-          if [ -d "server" ]; then
-            echo "Installing backend dependencies..."
-            cd server
-            npm install --production
             cd ..
           fi
           
           # Start backend with PM2
-          echo "Starting backend with PM2..."
           pm2 delete taskflow-api 2>/dev/null || true
           pm2 start server/index.js --name taskflow-api
           pm2 save
-          
-          echo "✅ Deployment complete!"
-          pm2 status
+          pm2 startup systemd -u root --hp /root
           DEPLOYEOF
           
           chmod +x /opt/webapp/deploy.sh
-          chown ec2-user:ec2-user /opt/webapp/deploy.sh
-          echo "✅ Deployment script created"
           
-          # Configure Nginx
-          echo "[8/9] Configuring Nginx..."
+          # Configure Nginx as reverse proxy
           cat > /etc/nginx/conf.d/webapp.conf <<'NGINXEOF'
           server {
               listen 80;
               server_name _;
               
-              # Serve React frontend (Vite uses 'dist' directory)
+              # Serve React frontend
               location / {
-                  root /opt/webapp/client/dist;
+                  root /opt/webapp/client/build;
                   try_files $uri $uri/ /index.html;
-                  add_header Cache-Control "no-cache, must-revalidate";
               }
               
               # Proxy API requests to Express
@@ -361,21 +300,15 @@ Resources:
                   proxy_set_header Upgrade $http_upgrade;
                   proxy_set_header Connection 'upgrade';
                   proxy_set_header Host $host;
-                  proxy_set_header X-Real-IP $remote_addr;
-                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
                   proxy_cache_bypass $http_upgrade;
               }
           }
           NGINXEOF
           
-          # Test and start Nginx
-          nginx -t || { echo "ERROR: Nginx configuration test failed"; exit 1; }
-          systemctl start nginx || { echo "ERROR: Failed to start Nginx"; exit 1; }
+          systemctl start nginx
           systemctl enable nginx
-          echo "✅ Nginx configured and started"
           
-          # Create environment file
-          echo "[9/9] Creating environment configuration..."
+          # Set environment variables
           cat > /opt/webapp/.env <<ENVEOF
           DB_HOST=${DBInstance.PrivateIp}
           DB_PORT=5432
@@ -386,18 +319,9 @@ Resources:
           PORT=3000
           ENVEOF
           
-          chown ec2-user:ec2-user /opt/webapp/.env
-          chmod 600 /opt/webapp/.env
-          echo "✅ Environment file created"
-          
-          # Install PostgreSQL client for testing DB connection
-          echo "Installing PostgreSQL client..."
-          amazon-linux-extras install postgresql14 -y
-          
           # Install CloudWatch agent
-          echo "Installing CloudWatch agent..."
-          wget https://s3.amazonaws.com/amazoncloudwatch-agent/amazon_linux/amd64/latest/amazon-cloudwatch-agent.rpm || { echo "ERROR: Failed to download CloudWatch agent"; exit 1; }
-          rpm -U ./amazon-cloudwatch-agent.rpm || { echo "ERROR: Failed to install CloudWatch agent"; exit 1; }
+          wget https://s3.amazonaws.com/amazoncloudwatch-agent/amazon_linux/amd64/latest/amazon-cloudwatch-agent.rpm
+          rpm -U ./amazon-cloudwatch-agent.rpm
           
           # Configure CloudWatch agent
           cat > /opt/aws/amazon-cloudwatch-agent/etc/config.json <<'CWEOF'
@@ -415,11 +339,6 @@ Resources:
                       "file_path": "/var/log/nginx/error.log",
                       "log_group_name": "/aws/ec2/webapp",
                       "log_stream_name": "{instance_id}/nginx-error"
-                    },
-                    {
-                      "file_path": "/var/log/user-data.log",
-                      "log_group_name": "/aws/ec2/webapp",
-                      "log_stream_name": "{instance_id}/user-data"
                     }
                   ]
                 }
@@ -444,40 +363,12 @@ Resources:
           }
           CWEOF
           
-          # Start CloudWatch agent
           /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
             -a fetch-config -m ec2 -s \
-            -c file:/opt/aws/amazon-cloudwatch-agent/etc/config.json || { echo "ERROR: Failed to start CloudWatch agent"; exit 1; }
-          
-          echo "✅ CloudWatch agent configured and started"
-          
-          echo "========================================="
-          echo "✅ WebApp Setup Complete - $(date)"
-          echo "========================================="
-          echo "📦 Node.js version: $(node --version)"
-          echo "📦 NPM version: $(npm --version)"
-          echo "📦 PM2 version: $(pm2 --version)"
-          echo "📦 Git version: $(git --version)"
-          echo "📦 Nginx version: $(nginx -v 2>&1)"
-          echo "========================================="
-          echo "🎯 Next steps:"
-          echo "   1. SSH to instance: ssh -i taskflow-key.pem ec2-user@<IP>"
-          echo "   2. Clone your repo: cd /opt/webapp && git clone <repo-url> ."
-          echo "   3. Deploy app: ./deploy.sh"
-          echo "========================================="
+            -c file:/opt/aws/amazon-cloudwatch-agent/etc/config.json
       Tags:
         - Key: Name
           Value: WebAppInstance
-
-  # Elastic IP for WebApp
-  WebAppEIP:
-    Type: AWS::EC2::EIP
-    Properties:
-      Domain: vpc
-      InstanceId: !Ref WebAppInstance
-      Tags:
-        - Key: Name
-          Value: WebApp-EIP
 
   # SNS Topic for Alerts
   AlertTopic:
@@ -533,17 +424,13 @@ Resources:
 Outputs:
   WebAppURL:
     Description: WebApp Public URL
-    Value: !Sub 'http://${WebAppEIP}'
+    Value: !Sub 'http://${WebAppInstance.PublicIp}'
     Export:
       Name: WebAppURL
 
   WebAppPublicIP:
-    Description: WebApp Public IP (Elastic IP)
-    Value: !Ref WebAppEIP
-
-  WebAppElasticIPAllocation:
-    Description: Elastic IP Allocation ID
-    Value: !GetAtt WebAppEIP.AllocationId
+    Description: WebApp Public IP
+    Value: !GetAtt WebAppInstance.PublicIp
 
   DBPrivateIP:
     Description: Database Private IP
