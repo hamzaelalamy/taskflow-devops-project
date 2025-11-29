@@ -232,7 +232,7 @@ jobs:
           echo "$EC2_KEY" > ~/.ssh/deploy_key.pem
           chmod 600 ~/.ssh/deploy_key.pem
           
-          # Add EC2 to known hosts (disable strict host checking for first connection)
+          # Add EC2 to known hosts
           ssh-keyscan -H $WEBAPP_IP >> ~/.ssh/known_hosts 2>/dev/null || true
           
           # Wait for SSH to be available
@@ -268,6 +268,27 @@ jobs:
             cd server
             npm install --production
             
+            # Detect entry point from package.json
+            ENTRY_POINT=$(node -p "require('./package.json').main || 'index.js'")
+            echo "🔍 Detected entry point: $ENTRY_POINT"
+            
+            # Fallback: find the entry file
+            if [ ! -f "$ENTRY_POINT" ]; then
+              if [ -f "index.js" ]; then
+                ENTRY_POINT="index.js"
+              elif [ -f "app.js" ]; then
+                ENTRY_POINT="app.js"
+              elif [ -f "server.js" ]; then
+                ENTRY_POINT="server.js"
+              else
+                echo "❌ Could not find entry point!"
+                ls -la
+                exit 1
+              fi
+            fi
+            
+            echo "✅ Using entry point: $ENTRY_POINT"
+            
             # Setup PM2 if not already installed
             if ! command -v pm2 &> /dev/null; then
               echo "📦 Installing PM2..."
@@ -278,11 +299,11 @@ jobs:
             echo "🔄 Restarting backend..."
             pm2 stop taskflow-backend 2>/dev/null || true
             pm2 delete taskflow-backend 2>/dev/null || true
-            pm2 start server.js --name taskflow-backend
+            pm2 start $ENTRY_POINT --name taskflow-backend
             pm2 save
             
             # Setup PM2 startup script
-            sudo env PATH=$PATH:/usr/bin pm2 startup systemd -u ec2-user --hp /home/ec2-user
+            sudo env PATH=$PATH:/usr/bin pm2 startup systemd -u ec2-user --hp /home/ec2-user 2>/dev/null || true
             
             # Update frontend files
             echo "🎨 Updating frontend..."
@@ -298,9 +319,12 @@ jobs:
             rm /tmp/taskflow-app.tar.gz
             
             echo "✅ Deployment completed successfully!"
+            echo "📊 PM2 Status:"
+            pm2 list
           EOF
           
           echo "✅ Application deployed to EC2"
+
 
       - name: Initialize database
         env:
