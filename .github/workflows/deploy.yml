@@ -212,7 +212,7 @@ jobs:
           # Copy backend
           cp -r server deploy-package/
           # Copy frontend build
-          cp -r client/build deploy-package/client/
+          cp -r client/dist deploy-package/client/
           # Copy database init script
           cp db/init.sql deploy-package/
           # Create tarball
