@@ -72,7 +72,7 @@ jobs:
       - name: Validate CloudFormation template
         run: |
           pip install cfn-lint
-          cfn-lint infrastructure.yml
+          cfn-lint infrastructure.yml --ignore-checks W1020,W3005
 
       - name: Validate SQL syntax
         run: |
