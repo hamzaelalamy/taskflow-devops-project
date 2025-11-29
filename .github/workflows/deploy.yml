@@ -16,7 +16,6 @@ env:
   NODE_VERSION: '18'
 
 jobs:
-  # CI Job - Tests and Validation
   ci:
     name: Continuous Integration
     runs-on: ubuntu-latest
@@ -106,7 +105,6 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Build Artifacts Ready for Deployment** 🚀" >> $GITHUB_STEP_SUMMARY
 
-  # CD Job - Deploy to AWS
   cd:
     name: Continuous Deployment
     runs-on: ubuntu-latest
@@ -128,13 +126,10 @@ jobs:
 
       - name: Build application
         run: |
-          # Install and build frontend
           cd client
           npm install
           npm run build
           cd ..
-          
-          # Install backend dependencies
           cd server
           npm install --production
           cd ..
@@ -209,33 +204,27 @@ jobs:
       - name: Package application
         run: |
           mkdir -p deploy-package
-          # Copy backend
           cp -r server deploy-package/
-          # Copy frontend build
           cp -r client/dist deploy-package/client/
-          # Copy database init script
           if [ -f db/init.sql ]; then
             cp db/init.sql deploy-package/
           fi
-          # Create tarball
           tar -czf taskflow-app.tar.gz -C deploy-package .
 
       - name: Deploy application to EC2
         env:
           WEBAPP_IP: ${{ steps.stack-outputs.outputs.webapp_ip }}
           EC2_KEY: ${{ secrets.EC2_PRIVATE_KEY }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
           echo "🚀 Deploying application to EC2..."
           
-          # Setup SSH key
           mkdir -p ~/.ssh
           echo "$EC2_KEY" > ~/.ssh/deploy_key.pem
           chmod 600 ~/.ssh/deploy_key.pem
           
-          # Add EC2 to known hosts
           ssh-keyscan -H $WEBAPP_IP >> ~/.ssh/known_hosts 2>/dev/null || true
           
-          # Wait for SSH to be available
           echo "⏳ Waiting for SSH to be available..."
           for i in {1..30}; do
             if ssh -i ~/.ssh/deploy_key.pem -o ConnectTimeout=5 -o StrictHostKeyChecking=no ec2-user@$WEBAPP_IP "echo 'SSH Ready'" 2>/dev/null; then
@@ -246,33 +235,35 @@ jobs:
             sleep 10
           done
           
-          # Copy application package to EC2
           echo "📦 Copying application files..."
           scp -i ~/.ssh/deploy_key.pem -o StrictHostKeyChecking=no taskflow-app.tar.gz ec2-user@$WEBAPP_IP:/tmp/
           
-          # Deploy and restart services on EC2
           echo "🔄 Deploying and restarting services..."
-          ssh -i ~/.ssh/deploy_key.pem -o StrictHostKeyChecking=no ec2-user@$WEBAPP_IP << 'EOF'
+          ssh -i ~/.ssh/deploy_key.pem -o StrictHostKeyChecking=no ec2-user@$WEBAPP_IP bash << 'ENDSSH'
             set -e
             
-            # Create application directory if it doesn't exist
-            sudo mkdir -p /var/www/taskflow
-            sudo chown ec2-user:ec2-user /var/www/taskflow
+            echo "📁 Setting up application directory..."
+            cd /opt/webapp
             
-            # Extract application
-            cd /var/www/taskflow
+            if [ -d "server" ] || [ -d "client" ]; then
+              echo "💾 Backing up previous deployment..."
+              sudo rm -rf /opt/webapp-backup 2>/dev/null || true
+              sudo cp -r /opt/webapp /opt/webapp-backup 2>/dev/null || true
+            fi
+            
+            echo "📦 Extracting new application..."
             tar -xzf /tmp/taskflow-app.tar.gz
             
-            # Install/Update backend dependencies
             echo "📦 Installing backend dependencies..."
             cd server
             npm install --production
             
-            # Detect entry point from package.json
-            ENTRY_POINT=$(node -p "require('./package.json').main || 'index.js'")
-            echo "🔍 Detected entry point: $ENTRY_POINT"
+            if [ -f "package.json" ]; then
+              ENTRY_POINT=$(node -p "try { require('./package.json').main } catch(e) { 'index.js' }")
+            else
+              ENTRY_POINT="index.js"
+            fi
             
-            # Fallback: find the entry file
             if [ ! -f "$ENTRY_POINT" ]; then
               if [ -f "index.js" ]; then
                 ENTRY_POINT="index.js"
@@ -289,58 +280,36 @@ jobs:
             
             echo "✅ Using entry point: $ENTRY_POINT"
             
-            # Setup PM2 if not already installed
-            if ! command -v pm2 &> /dev/null; then
-              echo "📦 Installing PM2..."
-              sudo npm install -g pm2
-            fi
-            
-            # Restart backend with PM2
-            echo "🔄 Restarting backend..."
-            pm2 stop taskflow-backend 2>/dev/null || true
-            pm2 delete taskflow-backend 2>/dev/null || true
-            pm2 start $ENTRY_POINT --name taskflow-backend
+            echo "🔄 Restarting backend with PM2..."
+            pm2 stop taskflow-api 2>/dev/null || true
+            pm2 delete taskflow-api 2>/dev/null || true
+            pm2 start $ENTRY_POINT --name taskflow-api --env production
             pm2 save
             
-            # Setup PM2 startup script
-            sudo env PATH=$PATH:/usr/bin pm2 startup systemd -u ec2-user --hp /home/ec2-user 2>/dev/null || true
+            cd ..
             
-            # Update frontend files
             echo "🎨 Updating frontend..."
-            sudo mkdir -p /var/www/html
-            sudo cp -r ../client/dist/* /var/www/html/
+            sudo cp -r client/dist/* /opt/webapp/client/dist/ 2>/dev/null || true
             
-            # Restart nginx if installed
-            if command -v nginx &> /dev/null; then
-              sudo systemctl restart nginx
-            fi
+            echo "🔄 Restarting Nginx..."
+            sudo systemctl restart nginx
             
-            # Cleanup
             rm /tmp/taskflow-app.tar.gz
             
             echo "✅ Deployment completed successfully!"
+            echo ""
             echo "📊 PM2 Status:"
             pm2 list
-          EOF
+          ENDSSH
           
           echo "✅ Application deployed to EC2"
-
-
-      - name: Initialize database
-        env:
-          WEBAPP_IP: ${{ steps.stack-outputs.outputs.webapp_ip }}
-        run: |
-          echo "🗄️ Database initialization..."
-          # Add your database initialization logic here if needed
-          # Example: ssh to EC2 and run migration scripts
-          echo "Database initialization completed via CloudFormation UserData"
 
       - name: Test application health
         env:
           WEBAPP_URL: ${{ steps.stack-outputs.outputs.webapp_url }}
         run: |
           echo "🧪 Testing application health..."
-          sleep 30  # Wait for services to start
+          sleep 30
           for i in {1..10}; do
             HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" $WEBAPP_URL || echo "000")
             echo "Attempt $i: HTTP $HTTP_CODE"
@@ -382,12 +351,6 @@ jobs:
           echo "- **Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Deployed by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Time:** $(date -u)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Next Steps" >> $GITHUB_STEP_SUMMARY
-          echo "1. ✉️ Confirm SNS email subscription" >> $GITHUB_STEP_SUMMARY
-          echo "2. 📊 Check CloudWatch dashboards" >> $GITHUB_STEP_SUMMARY
-          echo "3. 🧪 Test the application features" >> $GITHUB_STEP_SUMMARY
-          echo "4. 📸 Take screenshots for documentation" >> $GITHUB_STEP_SUMMARY
 
       - name: Notify deployment status
         if: always()
@@ -398,7 +361,6 @@ jobs:
             echo "❌ Deployment failed. Check the logs above for details."
           fi
 
-  # Cleanup job (manual trigger only)
   cleanup:
     name: Cleanup Resources
     runs-on: ubuntu-latest
@@ -432,5 +394,3 @@ jobs:
           echo "- VPC and networking deleted" >> $GITHUB_STEP_SUMMARY
           echo "- Security groups removed" >> $GITHUB_STEP_SUMMARY
           echo "- CloudWatch logs retained (7 days)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**No further charges will be incurred** ✅" >> $GITHUB_STEP_SUMMARY
