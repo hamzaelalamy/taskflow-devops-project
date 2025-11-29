@@ -214,34 +214,109 @@ jobs:
           # Copy frontend build
           cp -r client/dist deploy-package/client/
           # Copy database init script
-          cp db/init.sql deploy-package/
+          if [ -f db/init.sql ]; then
+            cp db/init.sql deploy-package/
+          fi
           # Create tarball
           tar -czf taskflow-app.tar.gz -C deploy-package .
 
       - name: Deploy application to EC2
         env:
           WEBAPP_IP: ${{ steps.stack-outputs.outputs.webapp_ip }}
+          EC2_KEY: ${{ secrets.EC2_PRIVATE_KEY }}
         run: |
           echo "🚀 Deploying application to EC2..."
-          # Note: In production, you would use SSH or AWS Systems Manager
-          # For this demo, the application is deployed via UserData in CloudFormation
-          # This step demonstrates where you would do additional deployment steps
-          echo "Application deployment completed via CloudFormation UserData"
-          echo "Real deployment would use: scp, rsync, or AWS CodeDeploy"
+          
+          # Setup SSH key
+          mkdir -p ~/.ssh
+          echo "$EC2_KEY" > ~/.ssh/deploy_key.pem
+          chmod 600 ~/.ssh/deploy_key.pem
+          
+          # Add EC2 to known hosts (disable strict host checking for first connection)
+          ssh-keyscan -H $WEBAPP_IP >> ~/.ssh/known_hosts 2>/dev/null || true
+          
+          # Wait for SSH to be available
+          echo "⏳ Waiting for SSH to be available..."
+          for i in {1..30}; do
+            if ssh -i ~/.ssh/deploy_key.pem -o ConnectTimeout=5 -o StrictHostKeyChecking=no ec2-user@$WEBAPP_IP "echo 'SSH Ready'" 2>/dev/null; then
+              echo "✅ SSH connection established"
+              break
+            fi
+            echo "Attempt $i/30: SSH not ready yet..."
+            sleep 10
+          done
+          
+          # Copy application package to EC2
+          echo "📦 Copying application files..."
+          scp -i ~/.ssh/deploy_key.pem -o StrictHostKeyChecking=no taskflow-app.tar.gz ec2-user@$WEBAPP_IP:/tmp/
+          
+          # Deploy and restart services on EC2
+          echo "🔄 Deploying and restarting services..."
+          ssh -i ~/.ssh/deploy_key.pem -o StrictHostKeyChecking=no ec2-user@$WEBAPP_IP << 'EOF'
+            set -e
+            
+            # Create application directory if it doesn't exist
+            sudo mkdir -p /var/www/taskflow
+            sudo chown ec2-user:ec2-user /var/www/taskflow
+            
+            # Extract application
+            cd /var/www/taskflow
+            tar -xzf /tmp/taskflow-app.tar.gz
+            
+            # Install/Update backend dependencies
+            echo "📦 Installing backend dependencies..."
+            cd server
+            npm install --production
+            
+            # Setup PM2 if not already installed
+            if ! command -v pm2 &> /dev/null; then
+              echo "📦 Installing PM2..."
+              sudo npm install -g pm2
+            fi
+            
+            # Restart backend with PM2
+            echo "🔄 Restarting backend..."
+            pm2 stop taskflow-backend 2>/dev/null || true
+            pm2 delete taskflow-backend 2>/dev/null || true
+            pm2 start server.js --name taskflow-backend
+            pm2 save
+            
+            # Setup PM2 startup script
+            sudo env PATH=$PATH:/usr/bin pm2 startup systemd -u ec2-user --hp /home/ec2-user
+            
+            # Update frontend files
+            echo "🎨 Updating frontend..."
+            sudo mkdir -p /var/www/html
+            sudo cp -r ../client/dist/* /var/www/html/
+            
+            # Restart nginx if installed
+            if command -v nginx &> /dev/null; then
+              sudo systemctl restart nginx
+            fi
+            
+            # Cleanup
+            rm /tmp/taskflow-app.tar.gz
+            
+            echo "✅ Deployment completed successfully!"
+          EOF
+          
+          echo "✅ Application deployed to EC2"
 
       - name: Initialize database
         env:
           WEBAPP_IP: ${{ steps.stack-outputs.outputs.webapp_ip }}
         run: |
-          echo "🗄️ Database initialization completed via CloudFormation"
-          echo "In production, you would run: psql -h DB_HOST -U user -d db < init.sql"
+          echo "🗄️ Database initialization..."
+          # Add your database initialization logic here if needed
+          # Example: ssh to EC2 and run migration scripts
+          echo "Database initialization completed via CloudFormation UserData"
 
       - name: Test application health
         env:
           WEBAPP_URL: ${{ steps.stack-outputs.outputs.webapp_url }}
         run: |
           echo "🧪 Testing application health..."
-          sleep 60  # Wait for services to start
+          sleep 30  # Wait for services to start
           for i in {1..10}; do
             HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" $WEBAPP_URL || echo "000")
             echo "Attempt $i: HTTP $HTTP_CODE"
