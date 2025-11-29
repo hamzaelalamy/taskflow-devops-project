@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Mini CI/CD Project - VPC, EC2 WebApp (React+Express), EC2 DB (PostgreSQL), CloudWatch, SNS - Amazon Linux 2023'
+Description: 'Mini CI/CD Project - VPC, EC2 WebApp (React+Express), EC2 DB (PostgreSQL), CloudWatch, SNS - Amazon Linux 2023 with NAT Gateway'
 
 Parameters:
   KeyName:
@@ -65,6 +65,26 @@ Resources:
         - Key: Name
           Value: PrivateSubnet
 
+  # Elastic IP for NAT Gateway
+  NATGatewayEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: AttachGateway
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: NAT-Gateway-EIP
+
+  # NAT Gateway (allows private subnet to access Internet)
+  NATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NATGatewayEIP.AllocationId
+      SubnetId: !Ref PublicSubnet
+      Tags:
+        - Key: Name
+          Value: ProjectNATGateway
+
   # Public Route Table
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
@@ -88,7 +108,7 @@ Resources:
       SubnetId: !Ref PublicSubnet
       RouteTableId: !Ref PublicRouteTable
 
-  # Private Route Table
+  # Private Route Table (routes through NAT Gateway)
   PrivateRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -96,6 +116,13 @@ Resources:
       Tags:
         - Key: Name
           Value: PrivateRouteTable
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway
 
   PrivateSubnetRouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
@@ -177,6 +204,7 @@ Resources:
   # Database EC2 Instance (Private) - PostgreSQL
   DBInstance:
     Type: AWS::EC2::Instance
+    DependsOn: NATGateway
     Properties:
       InstanceType: t3.micro
       KeyName: !Ref KeyName
@@ -194,19 +222,37 @@ Resources:
           echo "Starting Database Setup - $(date)"
           echo "========================================="
           
+          # Wait for network to be ready
+          echo "Waiting for network connectivity..."
+          sleep 30
+          
+          # Test internet connectivity
+          for i in {1..10}; do
+            if ping -c 1 8.8.8.8 &> /dev/null; then
+              echo "✅ Internet connectivity established"
+              break
+            fi
+            echo "⏳ Waiting for internet... attempt $i/10"
+            sleep 10
+          done
+          
           # Update system
           echo "[1/6] Updating system packages..."
           dnf update -y || { echo "ERROR: Failed to update system"; exit 1; }
           
-          # Install PostgreSQL 15 (available in AL2023)
+          # Install PostgreSQL 15
           echo "[2/6] Installing PostgreSQL 15..."
           dnf install -y postgresql15 postgresql15-server || { echo "ERROR: Failed to install PostgreSQL"; exit 1; }
+          
+          # Verify installation
+          psql --version || { echo "ERROR: PostgreSQL installation verification failed"; exit 1; }
+          echo "✅ PostgreSQL installed: $(psql --version)"
           
           # Initialize PostgreSQL
           echo "[3/6] Initializing PostgreSQL..."
           postgresql-setup --initdb || { echo "ERROR: Failed to initialize PostgreSQL"; exit 1; }
           
-          # Configure PostgreSQL
+          # Configure PostgreSQL to accept connections from VPC
           echo "[4/6] Configuring PostgreSQL..."
           sed -i "s/#listen_addresses = 'localhost'/listen_addresses = '*'/" /var/lib/pgsql/data/postgresql.conf
           echo "host all all 10.0.0.0/16 md5" >> /var/lib/pgsql/data/pg_hba.conf
@@ -218,7 +264,10 @@ Resources:
           
           # Wait for PostgreSQL to be ready
           echo "[6/6] Waiting for PostgreSQL to be ready..."
-          sleep 15
+          sleep 20
+          
+          # Verify PostgreSQL is running
+          systemctl status postgresql || { echo "ERROR: PostgreSQL is not running"; exit 1; }
           
           # Create database and user
           echo "Creating database and user..."
@@ -231,11 +280,15 @@ Resources:
           GRANT ALL ON SCHEMA public TO taskflow_user;
           EOF
           
+          # Verify database creation
+          sudo -u postgres psql -l | grep taskflow_db || { echo "ERROR: Database creation failed"; exit 1; }
+          
           echo "========================================="
           echo "✅ Database Setup Complete - $(date)"
           echo "PostgreSQL version: $(psql --version)"
           echo "Database: taskflow_db"
           echo "User: taskflow_user"
+          echo "Listening on: 0.0.0.0:5432"
           echo "========================================="
       Tags:
         - Key: Name
@@ -272,7 +325,7 @@ Resources:
           git --version
           echo "✅ Git installed successfully"
           
-          # Install Node.js 20 (AL2023 supports it natively)
+          # Install Node.js 20
           echo "[3/8] Installing Node.js 20..."
           dnf install -y nodejs npm || { echo "ERROR: Failed to install Node.js"; exit 1; }
           
@@ -292,6 +345,10 @@ Resources:
           dnf install -y nginx || { echo "ERROR: Failed to install Nginx"; exit 1; }
           nginx -v
           echo "✅ Nginx installed successfully"
+          
+          # Install PostgreSQL client
+          echo "Installing PostgreSQL client..."
+          dnf install -y postgresql15 || { echo "ERROR: Failed to install PostgreSQL client"; exit 1; }
           
           # Create app directory
           echo "[6/8] Creating application directory..."
@@ -336,16 +393,16 @@ Resources:
           chown ec2-user:ec2-user /opt/webapp/deploy.sh
           echo "✅ Deployment script created"
           
-          # Configure Nginx
+          # Configure Nginx (use dist instead of build for Vite)
           echo "[7/8] Configuring Nginx..."
           cat > /etc/nginx/conf.d/webapp.conf <<'NGINXEOF'
           server {
               listen 80;
               server_name _;
               
-              # Serve React frontend
+              # Serve React frontend (Vite uses dist folder)
               location / {
-                  root /opt/webapp/client/build;
+                  root /opt/webapp/client/dist;
                   try_files $uri $uri/ /index.html;
                   add_header Cache-Control "no-cache, must-revalidate";
               }
@@ -448,6 +505,7 @@ Resources:
           echo "📦 PM2 version: $(pm2 --version)"
           echo "📦 Git version: $(git --version)"
           echo "📦 Nginx version: $(nginx -v 2>&1)"
+          echo "📦 PostgreSQL client: $(psql --version)"
           echo "========================================="
           echo "🎯 Next steps:"
           echo "  1. SSH to instance: ssh -i taskflow-key.pem ec2-user@\$PUBLIC_IP"
@@ -533,6 +591,10 @@ Outputs:
   WebAppElasticIPAllocation:
     Description: Elastic IP Allocation ID
     Value: !GetAtt WebAppEIP.AllocationId
+  
+  NATGatewayIP:
+    Description: NAT Gateway Elastic IP
+    Value: !Ref NATGatewayEIP
 
   DBPrivateIP:
     Description: Database Private IP
