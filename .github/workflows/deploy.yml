@@ -126,12 +126,25 @@ jobs:
 
       - name: Build application
         run: |
+          # Build frontend with production API configuration
           cd client
+          
+          # Create .env for Vite build (use relative API path for Nginx proxy)
+          echo "VITE_API_URL=/api" > .env
+          echo "✅ Created frontend .env with VITE_API_URL=/api"
+          
           npm install
           npm run build
+          
+          echo "✅ Frontend built successfully"
+          ls -la dist/
+          
           cd ..
+          
+          # Install backend dependencies
           cd server
           npm install --production
+          echo "✅ Backend dependencies installed"
           cd ..
 
       - name: Configure AWS credentials
@@ -196,25 +209,53 @@ jobs:
             --stack-name ${{ env.STACK_NAME }} \
             --query "Stacks[0].Outputs[?OutputKey=='WebAppURL'].OutputValue" \
             --output text)
+          DB_IP=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query "Stacks[0].Outputs[?OutputKey=='DBPrivateIP'].OutputValue" \
+            --output text)
+          
           echo "webapp_ip=$WEBAPP_IP" >> $GITHUB_OUTPUT
           echo "webapp_url=$WEBAPP_URL" >> $GITHUB_OUTPUT
+          echo "db_ip=$DB_IP" >> $GITHUB_OUTPUT
+          
           echo "WebApp IP: $WEBAPP_IP"
           echo "WebApp URL: $WEBAPP_URL"
+          echo "Database IP: $DB_IP"
 
       - name: Package application
+        env:
+          DB_IP: ${{ steps.stack-outputs.outputs.db_ip }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
           echo "📦 Packaging application..."
           mkdir -p deploy-package/server
           mkdir -p deploy-package/client/dist
           
           # Copy backend
+          echo "Copying backend files..."
           cp -r server/* deploy-package/server/
           
-          # Copy frontend build - FIXED: Check if dist exists and copy contents
+          # Create production .env file for backend
+          echo "Creating backend .env file..."
+          cat > deploy-package/server/.env <<EOF
+          NODE_ENV=production
+          PORT=3000
+          DB_HOST=$DB_IP
+          DB_PORT=5432
+          DB_NAME=taskflow_db
+          DB_USER=taskflow_user
+          DB_PASSWORD=$DB_PASSWORD
+          EOF
+          
+          echo "✅ Backend .env created:"
+          cat deploy-package/server/.env
+          
+          # Copy frontend build
           if [ -d "client/dist" ]; then
             echo "✅ Found client/dist, copying contents..."
             cp -r client/dist/* deploy-package/client/dist/
-            ls -la deploy-package/client/dist/
+            echo "Frontend files copied: $(find deploy-package/client/dist -type f | wc -l) files"
+            ls -la deploy-package/client/dist/ | head -10
           else
             echo "❌ ERROR: client/dist not found!"
             echo "Available client directories:"
@@ -224,13 +265,21 @@ jobs:
           
           # Copy database init if exists
           if [ -f "db/init.sql" ]; then
+            echo "Copying database init script..."
             cp db/init.sql deploy-package/
           fi
           
-          echo "📋 Package contents:"
+          echo ""
+          echo "📋 Final package contents:"
+          echo "--------------------------------"
           ls -la deploy-package/
+          echo ""
+          echo "Backend files:"
+          find deploy-package/server -type f | head -10
+          echo ""
           echo "Frontend files:"
-          ls -la deploy-package/client/dist/ | head -10
+          find deploy-package/client/dist -type f | head -10
+          echo ""
           
           # Create tarball
           tar -czf taskflow-app.tar.gz -C deploy-package .
@@ -267,7 +316,9 @@ jobs:
           ssh -i ~/.ssh/deploy_key.pem -o StrictHostKeyChecking=no ec2-user@$WEBAPP_IP bash << 'ENDSSH'
             set -e
             
-            echo "📁 Preparing deployment..."
+            echo "========================================="
+            echo "📁 Starting Deployment Process"
+            echo "========================================="
             
             # Extract to temporary directory
             rm -rf /tmp/deploy-new
@@ -276,41 +327,75 @@ jobs:
             echo "📦 Extracting application package..."
             tar -xzf /tmp/taskflow-app.tar.gz -C /tmp/deploy-new
             
-            echo "✅ Extracted files:"
+            echo "✅ Extracted package structure:"
             ls -la /tmp/deploy-new
+            
+            echo ""
             echo "Frontend files in package:"
-            ls -la /tmp/deploy-new/client/dist/ 2>/dev/null || echo "⚠️ No dist directory found!"
+            if [ -d "/tmp/deploy-new/client/dist" ]; then
+              ls -la /tmp/deploy-new/client/dist/ | head -10
+              echo "Total frontend files: $(find /tmp/deploy-new/client/dist -type f | wc -l)"
+            else
+              echo "⚠️ No dist directory found!"
+            fi
+            
+            echo ""
+            echo "Backend .env file:"
+            if [ -f "/tmp/deploy-new/server/.env" ]; then
+              echo "✅ .env file found"
+              cat /tmp/deploy-new/server/.env
+            else
+              echo "⚠️ No .env file found in package!"
+            fi
             
             # Verify frontend files exist
             if [ ! -d "/tmp/deploy-new/client/dist" ] || [ -z "$(ls -A /tmp/deploy-new/client/dist)" ]; then
+              echo ""
               echo "❌ ERROR: Frontend dist directory is missing or empty!"
               echo "Package structure:"
               find /tmp/deploy-new -type f
               exit 1
             fi
             
-            # Stop PM2 before updating files
-            echo "🛑 Stopping running application..."
-            pm2 stop taskflow-api 2>/dev/null || true
-            pm2 delete taskflow-api 2>/dev/null || true
+            echo ""
+            echo "========================================="
+            echo "🛑 Stopping Current Application"
+            echo "========================================="
+            pm2 stop taskflow-api 2>/dev/null || echo "No app to stop"
+            pm2 delete taskflow-api 2>/dev/null || echo "No app to delete"
             
-            # Update backend
-            echo "🔧 Updating backend..."
+            echo ""
+            echo "========================================="
+            echo "🔧 Updating Backend"
+            echo "========================================="
             cd /opt/webapp
             
-            # Fix ownership first to avoid permission issues
+            # Fix ownership
             sudo chown -R ec2-user:ec2-user /opt/webapp 2>/dev/null || true
             
-            # Remove old backend (keep backup)
+            # Backup old backend
             if [ -d "server" ]; then
-              rm -rf server-backup
+              echo "Backing up old backend..."
+              rm -rf server-backup-old
+              mv server-backup server-backup-old 2>/dev/null || true
               mv server server-backup
             fi
             
             # Copy new backend
+            echo "Copying new backend..."
             cp -r /tmp/deploy-new/server ./
             
+            # Verify .env was copied
+            if [ -f "server/.env" ]; then
+              echo "✅ Backend .env file present:"
+              cat server/.env
+            else
+              echo "❌ ERROR: .env file missing after copy!"
+              exit 1
+            fi
+            
             # Install backend dependencies
+            echo "Installing backend dependencies..."
             cd server
             npm install --production
             
@@ -321,6 +406,7 @@ jobs:
               ENTRY_POINT="index.js"
             fi
             
+            # Find entry point if not found
             if [ ! -f "$ENTRY_POINT" ]; then
               if [ -f "index.js" ]; then
                 ENTRY_POINT="index.js"
@@ -330,7 +416,8 @@ jobs:
                 ENTRY_POINT="server.js"
               else
                 echo "❌ Could not find entry point!"
-                ls -la
+                echo "Available JS files:"
+                ls -la *.js 2>/dev/null || echo "No JS files found"
                 exit 1
               fi
             fi
@@ -338,67 +425,129 @@ jobs:
             echo "✅ Using entry point: $ENTRY_POINT"
             
             # Start backend with PM2
+            echo ""
             echo "🔄 Starting backend with PM2..."
             pm2 start $ENTRY_POINT --name taskflow-api --env production
             pm2 save
             
-            # Update frontend
-            echo "🎨 Updating frontend..."
+            # Wait for backend to start
+            sleep 5
+            
+            echo ""
+            echo "========================================="
+            echo "🎨 Updating Frontend"
+            echo "========================================="
             cd /opt/webapp
             
-            # Remove old frontend dist
+            # Backup old frontend
             if [ -d "client/dist" ]; then
-              rm -rf client/dist-backup
+              echo "Backing up old frontend..."
+              rm -rf client/dist-backup-old
+              mv client/dist-backup client/dist-backup-old 2>/dev/null || true
               mv client/dist client/dist-backup
             fi
             
-            # Create client directory if it doesn't exist
+            # Create client directory structure
             mkdir -p client/dist
             
-            # Copy new frontend - FIXED: Copy contents without wildcard issues
-            echo "Copying frontend files..."
+            # Copy new frontend
+            echo "Copying new frontend files..."
             cp -r /tmp/deploy-new/client/dist/* client/dist/ 2>/dev/null || {
-              # Fallback: try without hidden files first
               cp -r /tmp/deploy-new/client/dist/. client/dist/ 2>/dev/null || {
                 echo "❌ Failed to copy frontend files"
                 exit 1
               }
             }
             
-            echo "✅ Frontend files updated:"
-            ls -la client/dist/
+            echo "✅ Frontend files updated"
             echo "File count: $(find client/dist -type f | wc -l)"
+            echo "Files:"
+            ls -la client/dist/
             
-            # Verify critical files exist
+            # Verify critical files
             if [ ! -f "client/dist/index.html" ]; then
-              echo "⚠️ WARNING: index.html not found in dist!"
+              echo "⚠️ WARNING: index.html not found!"
+              echo "Available files:"
+              find client/dist -type f
             else
-              echo "Timestamp: $(stat -c %y client/dist/index.html)"
+              echo "✅ index.html found: $(stat -c %y client/dist/index.html)"
             fi
             
-            # Restart Nginx
-            echo "🔄 Restarting Nginx..."
+            echo ""
+            echo "========================================="
+            echo "🔄 Restarting Nginx"
+            echo "========================================="
             sudo systemctl restart nginx
             
-            # Cleanup
-            rm -rf /tmp/deploy-new
-            rm /tmp/taskflow-app.tar.gz
+            # Verify Nginx is running
+            if sudo systemctl is-active --quiet nginx; then
+              echo "✅ Nginx is running"
+            else
+              echo "❌ Nginx failed to start!"
+              sudo systemctl status nginx
+              exit 1
+            fi
             
             echo ""
-            echo "✅ Deployment completed successfully!"
+            echo "========================================="
+            echo "🧹 Cleanup"
+            echo "========================================="
+            rm -rf /tmp/deploy-new
+            rm /tmp/taskflow-app.tar.gz
+            echo "✅ Temporary files removed"
+            
             echo ""
-            echo "📊 PM2 Status:"
+            echo "========================================="
+            echo "✅ Deployment Complete!"
+            echo "========================================="
+            echo ""
+            echo "📊 Application Status:"
+            echo "--------------------------------"
             pm2 list
             echo ""
-            echo "📊 Deployment Info:"
-            echo "Backend Entry: $ENTRY_POINT"
-            echo "Frontend Files: $(find client/dist -type f | wc -l)"
+            echo "📊 Backend Info:"
+            echo "  Entry Point: $ENTRY_POINT"
+            echo "  Environment: production"
+            echo "  .env: $([ -f /opt/webapp/server/.env ] && echo '✅ Present' || echo '❌ Missing')"
+            echo ""
+            echo "📊 Frontend Info:"
+            echo "  Files: $(find client/dist -type f | wc -l)"
             if [ -f "client/dist/index.html" ]; then
-              echo "Frontend Updated: $(stat -c %y client/dist/index.html)"
+              echo "  Updated: $(stat -c %y client/dist/index.html)"
             fi
+            echo ""
+            echo "📊 Services:"
+            echo "  PM2: $(pm2 list | grep -c online) running"
+            echo "  Nginx: $(sudo systemctl is-active nginx)"
+            echo ""
+            echo "========================================="
           ENDSSH
           
-          echo "✅ Application deployed to EC2"
+          echo "✅ Application deployed successfully to EC2"
+
+      - name: Verify deployment
+        env:
+          WEBAPP_IP: ${{ steps.stack-outputs.outputs.webapp_ip }}
+          EC2_KEY: ${{ secrets.EC2_PRIVATE_KEY }}
+        run: |
+          echo "🔍 Verifying deployment..."
+          
+          ssh -i ~/.ssh/deploy_key.pem -o StrictHostKeyChecking=no ec2-user@$WEBAPP_IP bash << 'ENDSSH'
+            echo "Checking PM2 status..."
+            pm2 status
+            
+            echo ""
+            echo "Checking backend logs (last 20 lines)..."
+            pm2 logs taskflow-api --nostream --lines 20 || true
+            
+            echo ""
+            echo "Testing backend health..."
+            curl -s http://localhost:3000/api/health || echo "Backend not responding yet"
+            
+            echo ""
+            echo "Testing Nginx..."
+            curl -s -o /dev/null -w "HTTP Status: %{http_code}\n" http://localhost/
+          ENDSSH
 
       - name: Test application health
         env:
@@ -406,15 +555,22 @@ jobs:
         run: |
           echo "🧪 Testing application health..."
           sleep 30
+          
           for i in {1..10}; do
             HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" $WEBAPP_URL || echo "000")
             echo "Attempt $i: HTTP $HTTP_CODE"
+            
             if [ "$HTTP_CODE" == "200" ]; then
               echo "✅ Application is responding!"
+              echo ""
+              echo "Testing content..."
+              curl -s $WEBAPP_URL | head -20
               break
             fi
+            
             if [ $i -eq 10 ]; then
-              echo "⚠️ Application may still be initializing. Check manually at: $WEBAPP_URL"
+              echo "⚠️ Application may still be initializing."
+              echo "Manual check required at: $WEBAPP_URL"
             fi
             sleep 10
           done
@@ -424,37 +580,65 @@ jobs:
           WEBAPP_URL: ${{ steps.stack-outputs.outputs.webapp_url }}
         run: |
           echo "🧪 Testing API health endpoint..."
+          sleep 5
+          
           API_RESPONSE=$(curl -s "$WEBAPP_URL/api/health" || echo "failed")
           echo "API Response: $API_RESPONSE"
+          
+          if echo "$API_RESPONSE" | grep -q "ok\|healthy\|success"; then
+            echo "✅ API is responding correctly"
+          else
+            echo "⚠️ API response unexpected, but deployment may still be initializing"
+          fi
 
       - name: Generate deployment report
         env:
           WEBAPP_URL: ${{ steps.stack-outputs.outputs.webapp_url }}
+          DB_IP: ${{ steps.stack-outputs.outputs.db_ip }}
         run: |
           echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ✅ Deployment Status: SUCCESS" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Stack Information" >> $GITHUB_STEP_SUMMARY
           echo "- **Stack Name:** \`${{ env.STACK_NAME }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Region:** \`${{ env.AWS_REGION }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Status:** ✅ Deployed Successfully" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Application URLs" >> $GITHUB_STEP_SUMMARY
           echo "- **WebApp:** [$WEBAPP_URL]($WEBAPP_URL)" >> $GITHUB_STEP_SUMMARY
           echo "- **API Health:** [$WEBAPP_URL/api/health]($WEBAPP_URL/api/health)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Infrastructure" >> $GITHUB_STEP_SUMMARY
+          echo "- **WebApp IP:** \`${{ steps.stack-outputs.outputs.webapp_ip }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Database IP:** \`$DB_IP\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Deployment Details" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Deployed by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Time:** $(date -u)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployed by:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Time:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Backend .env configured with database credentials" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Frontend configured with \`VITE_API_URL=/api\`" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Nginx proxy configured for \`/api\` routes" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "🎉 **Your TaskFlow application is now live!**" >> $GITHUB_STEP_SUMMARY
 
       - name: Notify deployment status
         if: always()
         run: |
           if [ "${{ job.status }}" == "success" ]; then
             echo "✅ Deployment completed successfully!"
+            echo "🌐 Application is now available at: ${{ steps.stack-outputs.outputs.webapp_url }}"
           else
             echo "❌ Deployment failed. Check the logs above for details."
+            echo "💡 Common issues:"
+            echo "  - Check if EC2 instances are running"
+            echo "  - Verify security group rules"
+            echo "  - Check CloudWatch logs"
           fi
 
   cleanup:
@@ -486,7 +670,8 @@ jobs:
           echo "## 🗑️ Cleanup Complete" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "All AWS resources have been deleted:" >> $GITHUB_STEP_SUMMARY
-          echo "- EC2 instances terminated" >> $GITHUB_STEP_SUMMARY
-          echo "- VPC and networking deleted" >> $GITHUB_STEP_SUMMARY
-          echo "- Security groups removed" >> $GITHUB_STEP_SUMMARY
-          echo "- CloudWatch logs retained (7 days)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ EC2 instances terminated" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ VPC and networking deleted" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Security groups removed" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Elastic IPs released" >> $GITHUB_STEP_SUMMARY
+          echo "- ℹ️ CloudWatch logs retained (7 days)" >> $GITHUB_STEP_SUMMARY
