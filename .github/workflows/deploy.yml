@@ -540,6 +540,39 @@ jobs:
           
           echo "✅ Application deployed successfully to EC2"
 
+      - name: Initialize database
+        env:
+          WEBAPP_IP: ${{ steps.stack-outputs.outputs.webapp_ip }}
+          DB_IP: ${{ steps.stack-outputs.outputs.db_ip }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          EC2_KEY: ${{ secrets.EC2_PRIVATE_KEY }}
+        run: |
+          echo "🗄️ Initializing database..."
+          
+          ssh -i ~/.ssh/deploy_key.pem -o StrictHostKeyChecking=no ec2-user@$WEBAPP_IP bash << ENDSSH
+            set -e
+            
+            cd /opt/webapp
+            
+            # Check if init.sql exists
+            if [ -f "init.sql" ]; then
+              SQL_FILE="init.sql"
+            elif [ -f "db/init.sql" ]; then
+              SQL_FILE="db/init.sql"
+            else
+              echo "❌ init.sql not found!"
+              exit 1
+            fi
+            
+            echo "📝 Running database initialization..."
+            PGPASSWORD='$DB_PASSWORD' psql -h $DB_IP -U taskflow_user -d taskflow_db -f \$SQL_FILE
+            
+            echo "✅ Database initialized successfully"
+            
+            # Verify tables were created
+            PGPASSWORD='$DB_PASSWORD' psql -h $DB_IP -U taskflow_user -d taskflow_db -c "\dt"
+          ENDSSH
+
       - name: Verify deployment
         env:
           WEBAPP_IP: ${{ steps.stack-outputs.outputs.webapp_ip }}
