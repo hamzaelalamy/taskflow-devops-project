@@ -1,557 +1,532 @@
-# 📋 TaskFlow - AWS DevOps CI/CD Project
+# 🎯 TaskFlow - Application de Gestion de Tâches DevOps
 
-## 🎯 Project Overview
+![AWS](https://img.shields.io/badge/AWS-Cloud-orange?logo=amazonaws)
+![GitHub Actions](https://img.shields.io/badge/CI/CD-GitHub_Actions-2088FF?logo=githubactions)
+![Node.js](https://img.shields.io/badge/Node.js-20-339933?logo=nodedotjs)
+![React](https://img.shields.io/badge/React-18-61DAFB?logo=react)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-4169E1?logo=postgresql)
 
-**TaskFlow** is a full-stack task management application demonstrating modern DevOps practices on AWS. It features a React frontend, Express.js backend, PostgreSQL database, and complete CI/CD automation with GitHub Actions.
+> **Projet DevOps 2025** - Application web de gestion de tâches déployée automatiquement sur AWS avec infrastructure as code et pipeline CI/CD complet.
 
-### Key Features
-
-- **📝 Task Management**: Create, update, complete, and delete tasks
-- **📁 Project Organization**: Group tasks into projects with progress tracking
-- **📊 Real-time Statistics**: Dashboard with task completion metrics
-- **🔄 Activity Logging**: Track all system activities
-- **🎨 Modern UI**: Beautiful, responsive React interface
-- **🔐 Secure Architecture**: Public/private subnet separation
-- **📈 Monitoring**: CloudWatch logs and metrics
-- **🚨 Alerting**: SNS email notifications
-- **🤖 Automated Deployment**: Complete CI/CD pipeline
-
-## 🏗️ Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        Internet                              │
-└───────────────────────┬─────────────────────────────────────┘
-                        │
-                        ▼
-                 ┌──────────────┐
-                 │   Internet   │
-                 │   Gateway    │
-                 └──────┬───────┘
-                        │
-       ┌────────────────┴────────────────────────┐
-       │         VPC (10.0.0.0/16)               │
-       │                                          │
-       │  ┌────────────────────────────────────┐ │
-       │  │  Public Subnet (10.0.1.0/24)      │ │
-       │  │                                    │ │
-       │  │  ┌──────────────────────────────┐ │ │
-       │  │  │  EC2 - WebApp (t2.small)     │ │ │
-       │  │  │  - Nginx (Port 80)           │◄┼─┼── HTTP Traffic
-       │  │  │  - React Frontend (Static)   │ │ │
-       │  │  │  - Express API (Port 3000)   │ │ │
-       │  │  │  - PM2 Process Manager       │ │ │
-       │  │  │  - CloudWatch Agent          │ │ │
-       │  │  └─────────────┬────────────────┘ │ │
-       │  └────────────────┼──────────────────┘ │
-       │                   │                     │
-       │                   │ PostgreSQL :5432    │
-       │                   ▼                     │
-       │  ┌────────────────────────────────────┐ │
-       │  │  Private Subnet (10.0.2.0/24)     │ │
-       │  │                                    │ │
-       │  │  ┌──────────────────────────────┐ │ │
-       │  │  │  EC2 - Database (t2.micro)   │ │ │
-       │  │  │  - PostgreSQL 14             │ │ │
-       │  │  │  - No Public IP              │ │ │
-       │  │  │  - Only accessible from VPC  │ │ │
-       │  │  └──────────────────────────────┘ │ │
-       │  └────────────────────────────────────┘ │
-       └─────────────────────────────────────────┘
-                        │
-                        ▼
-              ┌──────────────────┐
-              │   CloudWatch     │
-              │   - EC2 Metrics  │
-              │   - App Logs     │
-              │   - Nginx Logs   │
-              │   - Alarms       │
-              └────────┬─────────┘
-                       │
-                       ▼
-              ┌──────────────────┐
-              │   SNS Topic      │
-              │   - CPU Alerts   │
-              │   - Memory Alerts│
-              └──────────────────┘
-```
-
-## 📦 Technology Stack
-
-### Frontend
-- **React 18** - Modern UI framework
-- **CSS3** - Custom styling with gradients and animations
-- **Fetch API** - RESTful API communication
-
-### Backend
-- **Node.js 18** - JavaScript runtime
-- **Express.js** - Web application framework
-- **PostgreSQL** - Relational database
-- **PM2** - Process manager for Node.js
-
-### Infrastructure
-- **AWS EC2** - Virtual servers
-- **AWS VPC** - Network isolation
-- **AWS CloudWatch** - Monitoring and logging
-- **AWS SNS** - Email notifications
-- **CloudFormation** - Infrastructure as Code
-- **Nginx** - Reverse proxy and static file serving
-
-### DevOps
-- **GitHub Actions** - CI/CD automation
-- **Git** - Version control
-
-## 📁 Project Structure
-
-```
-taskflow-devops-project/
-│
-├── .github/
-│   └── workflows/
-│       └── deploy.yml              # CI/CD pipeline
-│
-├── client/                         # React Frontend
-│   ├── public/
-│   │   └── index.html
-│   ├── src/
-│   │   ├── App.js                 # Main application component
-│   │   ├── App.css                # Application styles
-│   │   └── index.js               # Entry point
-│   └── package.json
-│
-├── server/                         # Express Backend
-│   ├── index.js                   # API server
-│   ├── .env.example               # Environment variables template
-│   └── package.json
-│
-├── db/
-│   └── init.sql                   # Database schema and seed data
-│
-├── infrastructure.yml              # CloudFormation template
-├── package.json                    # Root package file
-└── README.md                       # This file
-```
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-1. **AWS Account** with appropriate permissions
-2. **GitHub Account**
-3. **Node.js 18+** installed locally (for development)
-4. **AWS CLI** installed and configured
-5. **EC2 Key Pair** created in your AWS region
-
-### Step 1: Clone and Setup Repository
-
-```bash
-# Create your GitHub repository
-# Then clone it locally
-git clone https://github.com/YOUR-USERNAME/taskflow-devops-project.git
-cd taskflow-devops-project
-
-# Create directory structure
-mkdir -p .github/workflows client/src client/public server db
-
-# Copy all artifact files to their respective locations
-# (infrastructure.yml, deploy.yml, App.js, etc.)
-```
-
-### Step 2: Local Development (Optional)
-
-```bash
-# Install all dependencies
-npm run install:all
-
-# Create server/.env file
-cat > server/.env << EOF
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=taskflow_db
-DB_USER=taskflow_user
-DB_PASSWORD=your_password
-NODE_ENV=development
-PORT=3000
-EOF
-
-# Start PostgreSQL locally (if you have it installed)
-# Initialize the database with db/init.sql
-
-# Start backend (in one terminal)
-npm run dev:server
-
-# Start frontend (in another terminal)
-npm run dev:client
-
-# Visit http://localhost:3000
-```
-
-### Step 3: Configure GitHub Secrets
-
-Go to: **Repository → Settings → Secrets and variables → Actions**
-
-Add these secrets:
-
-| Secret Name | Description | Example Value |
-|------------|-------------|---------------|
-| `AWS_ACCESS_KEY_ID` | AWS access key | `AKIAIOSFODNN7EXAMPLE` |
-| `AWS_SECRET_ACCESS_KEY` | AWS secret key | `wJalrXUtnFEMI/...` |
-| `EC2_KEY_NAME` | EC2 key pair name | `my-devops-key` |
-| `SNS_EMAIL` | Your email for alerts | `your-email@example.com` |
-| `DB_PASSWORD` | PostgreSQL password | `MySecurePass123!` |
-
-### Step 4: Deploy to AWS
-
-```bash
-# Commit and push to trigger deployment
-git add .
-git commit -m "Initial deployment"
-git push origin main
-
-# Or manually trigger from GitHub Actions tab
-```
-
-### Step 5: Verify Deployment
-
-1. **GitHub Actions**: Check the workflow run for success
-2. **Email**: Confirm SNS subscription (check your inbox)
-3. **WebApp**: Visit the URL from deployment summary
-4. **CloudWatch**: Check logs and metrics in AWS Console
-
-## 🎮 Using TaskFlow
-
-### Creating Projects
-
-1. Click the **Projects** tab
-2. Fill in project name and description
-3. Click **Create Project**
-4. View project progress on the card
-
-### Managing Tasks
-
-1. Click the **Tasks** tab
-2. Enter task title and description
-3. Optionally assign to a project
-4. Click **Create Task**
-5. Check the checkbox to mark complete
-6. Use filters to view All/Pending/Completed tasks
-7. Delete tasks with the 🗑️ button
-
-### Viewing Statistics
-
-The dashboard shows:
-- Total tasks created
-- Completed tasks count
-- Pending tasks count
-- Total projects count
-
-## 📊 Monitoring & Alerts
-
-### CloudWatch Logs
-
-Access logs at: **CloudWatch → Log groups → /aws/ec2/webapp**
-
-Available log streams:
-- `nginx-access` - HTTP requests
-- `nginx-error` - Server errors
-
-### CloudWatch Alarms
-
-Configured alarms:
-- **High CPU**: Alert when CPU > 70%
-- **High Memory**: Alert when memory > 80%
-
-### Testing Alerts
-
-```bash
-# SSH into WebApp instance
-ssh -i your-key.pem ec2-user@<WebApp-IP>
-
-# Generate CPU load
-yes > /dev/null &
-yes > /dev/null &
-yes > /dev/null &
-
-# Wait 5-10 minutes for alert email
-
-# Kill load generation
-killall yes
-```
-
-## 🔧 API Documentation
-
-### Base URL
-```
-http://<webapp-ip>/api
-```
-
-### Endpoints
-
-#### Health Check
-```http
-GET /api/health
-```
-
-#### Statistics
-```http
-GET /api/stats
-```
-
-#### Projects
-```http
-GET    /api/projects           # List all projects
-GET    /api/projects/:id       # Get single project
-POST   /api/projects           # Create project
-PUT    /api/projects/:id       # Update project
-DELETE /api/projects/:id       # Delete project
-```
-
-#### Tasks
-```http
-GET    /api/tasks              # List all tasks
-GET    /api/tasks/:id          # Get single task
-POST   /api/tasks              # Create task
-PUT    /api/tasks/:id          # Update task
-DELETE /api/tasks/:id          # Delete task
-```
-
-Query parameters for GET /api/tasks:
-- `status` - Filter by status (pending/completed)
-- `project_id` - Filter by project
-
-#### Activity Log
-```http
-GET /api/activity              # Get activity log (last 50)
-```
-
-## 🧪 Testing
-
-### Manual Testing
-
-```bash
-# Get WebApp URL
-aws cloudformation describe-stacks \
-  --stack-name taskflow-cicd-project \
-  --query "Stacks[0].Outputs[?OutputKey=='WebAppURL'].OutputValue" \
-  --output text
-
-# Test API health
-curl http://<webapp-ip>/api/health
-
-# Create a task
-curl -X POST http://<webapp-ip>/api/tasks \
-  -H "Content-Type: application/json" \
-  -d '{"title":"Test Task","description":"Testing API"}'
-
-# Get all tasks
-curl http://<webapp-ip>/api/tasks
-```
-
-### Automated Testing
-
-The CI pipeline runs:
-- Dependency installation
-- Code linting
-- Frontend build
-- CloudFormation validation
-- Security scans
-
-## 📸 Screenshots Checklist
-
-For project submission, capture:
-
-1. **✅ GitHub Actions**
-   - Successful CI pipeline
-   - Successful CD pipeline
-   - Deployment summary with URL
-
-2. **✅ TaskFlow Application**
-   - Dashboard with statistics
-   - Task list with completed/pending tasks
-   - Project view with progress bars
-   - Creating new task
-   - Creating new project
-
-3. **✅ AWS Console - CloudFormation**
-   - Stack status: CREATE_COMPLETE
-   - Resources tab (all resources)
-   - Outputs tab with URLs
-
-4. **✅ AWS Console - EC2**
-   - Both instances running
-   - Security groups configured
-   - Public/private subnet assignment
-
-5. **✅ AWS Console - CloudWatch**
-   - Log groups with logs
-   - Nginx access logs
-   - Metrics dashboard
-   - Configured alarms
-
-6. **✅ Email Notifications**
-   - SNS subscription confirmation
-   - High CPU alert (if triggered)
-
-7. **✅ Architecture Diagram**
-   - Network topology
-   - Data flow
-   - AWS services used
-
-## 🔒 Security Best Practices
-
-- ✅ Database in private subnet (no internet access)
-- ✅ Security groups with least privilege
-- ✅ No hardcoded credentials (using environment variables)
-- ✅ HTTPS ready (configure SSL certificate for production)
-- ✅ IAM roles instead of access keys on EC2
-- ✅ Regular security updates via yum update
-
-## 💰 Cost Optimization
-
-This project uses:
-- **2x t2.micro** or **t2.small** EC2 instances (~$10-20/month)
-- **Minimal CloudWatch** usage (~$1/month)
-- **Low SNS** usage (nearly free)
-- **Free tier eligible** for new AWS accounts
-
-**Total estimated cost**: ~$15-25/month
-
-## 🗑️ Cleanup Instructions
-
-### Via GitHub Actions (Recommended)
-1. Go to **Actions** tab
-2. Select "AWS CI/CD Pipeline - TaskFlow"
-3. Click **Run workflow**
-4. Wait for cleanup completion
-
-### Via AWS CLI
-```bash
-# Delete CloudFormation stack
-aws cloudformation delete-stack --stack-name taskflow-cicd-project
-
-# Wait for deletion
-aws cloudformation wait stack-delete-complete --stack-name taskflow-cicd-project
-
-# Verify deletion
-aws cloudformation list-stacks \
-  --query "StackSummaries[?StackName=='taskflow-cicd-project']"
-```
-
-### Manual Cleanup (if needed)
-1. Delete EC2 instances
-2. Delete VPC (will delete subnets, route tables, IGW)
-3. Delete Security Groups
-4. Delete CloudWatch Log Groups
-5. Delete SNS Topic
-
-## 🐛 Troubleshooting
-
-### Application Not Loading
-
-```bash
-# Check instance status
-aws ec2 describe-instance-status \
-  --instance-ids <instance-id>
-
-# SSH and check services
-ssh -i key.pem ec2-user@<webapp-ip>
-sudo systemctl status nginx
-pm2 list
-pm2 logs taskflow-api
-```
-
-### Database Connection Error
-
-```bash
-# SSH to WebApp
-ssh -i key.pem ec2-user@<webapp-ip>
-
-# Test DB connection
-psql -h <db-private-ip> -U taskflow_user -d taskflow_db
-
-# Check environment variables
-cat /opt/webapp/.env
-
-# Check logs
-pm2 logs taskflow-api
-```
-
-### CloudFormation Stack Failed
-
-```bash
-# View stack events
-aws cloudformation describe-stack-events \
-  --stack-name taskflow-cicd-project \
-  --max-items 20
-
-# Check specific resource
-aws cloudformation describe-stack-resource \
-  --stack-name taskflow-cicd-project \
-  --logical-resource-id WebAppInstance
-```
-
-## 🎓 Learning Outcomes
-
-This project demonstrates:
-
-1. **AWS Cloud Infrastructure**
-   - VPC design with public/private subnets
-   - Security group configuration
-   - EC2 instance management
-
-2. **DevOps Practices**
-   - Infrastructure as Code (CloudFormation)
-   - CI/CD pipelines (GitHub Actions)
-   - Automated testing and deployment
-
-3. **Full-Stack Development**
-   - React frontend development
-   - RESTful API design with Express
-   - PostgreSQL database management
-
-4. **Monitoring & Operations**
-   - CloudWatch logging and metrics
-   - SNS alerting
-   - Application health monitoring
-
-5. **Security**
-   - Network isolation
-   - Least privilege access
-   - Secrets management
-
-## 📚 Additional Resources
-
-- [AWS CloudFormation Documentation](https://docs.aws.amazon.com/cloudformation/)
-- [GitHub Actions Documentation](https://docs.github.com/en/actions)
-- [React Documentation](https://react.dev/)
-- [Express.js Documentation](https://expressjs.com/)
-- [PostgreSQL Documentation](https://www.postgresql.org/docs/)
-- [AWS VPC Best Practices](https://docs.aws.amazon.com/vpc/latest/userguide/vpc-security-best-practices.html)
-
-## 👤 Author
-
-**Your Name**
-- GitHub: [@hamzaelalamy](https://github.com/hamzaelalamy)
-- Email: your-email@example.com
-
-## 📄 License
-
-This project is created for educational purposes as part of an AWS DevOps course.
+📦 **Repository:** [github.com/hamzaelalamy/taskflow-devops-project](https://github.com/hamzaelalamy/taskflow-devops-project)
 
 ---
 
-## ⭐ Bonus Features Implemented
+## 📖 Description du Projet
 
-- ✅ Modern React UI with animations
-- ✅ Real-time statistics dashboard
-- ✅ Project management with progress tracking
-- ✅ Activity logging system
-- ✅ Comprehensive API with filtering
-- ✅ PM2 process management
-- ✅ Nginx reverse proxy
-- ✅ CloudWatch custom metrics
-- ✅ Multiple CloudWatch alarms
-- ✅ Comprehensive error handling
-- ✅ Responsive design for mobile devices
+**TaskFlow** est une application full-stack moderne permettant de créer, organiser et suivre des tâches en les regroupant par projets. Le projet démontre l'implémentation complète d'une infrastructure AWS avec les meilleures pratiques DevOps.
 
-**Ready to impress your evaluators! 🚀**
+### Fonctionnalités
+
+- ✅ **Gestion de Tâches** - Créer, modifier, compléter et supprimer des tâches
+- 📁 **Organisation par Projets** - Regrouper les tâches avec suivi de progression
+- 📊 **Dashboard** - Statistiques en temps réel (tâches totales, complétées, en attente)
+- 🎨 **Interface Moderne** - React 18 avec design responsive
+- 🔄 **API RESTful** - Backend Express.js avec PostgreSQL
+- 📈 **Monitoring** - CloudWatch logs, métriques et alertes SNS
+
+### Stack Technique
+
+Frontend: React 18 + Vite
+Backend: Node.js 20 + Express.js
+Database: PostgreSQL 15
+Serveur: Nginx + PM2
+Cloud: AWS (EC2, VPC, CloudWatch, SNS)
+IaC: CloudFormation
+CI/CD: GitHub Actions
+
+text
+
+---
+
+## 🏗️ Architecture AWS
+
+### Diagramme d'Architecture
+
+                      ┌─────────────┐
+                      │  Internet   │
+                      └──────┬──────┘
+                             │
+                    ┌────────▼────────┐
+                    │ Internet Gateway│
+                    └────────┬────────┘
+                             │
+    ┌────────────────────────┴────────────────────────┐
+    │         VPC (vpc-0d4332ca74f57df1c)             │
+    │              10.0.0.0/16                         │
+    │                                                  │
+    │  ┌────────────────────────────────────────┐    │
+    │  │  Public Subnet (10.0.1.0/24)          │    │
+    │  │                                        │    │
+    │  │  ┌──────────────────────────────┐     │    │
+    │  │  │  🖥️ EC2 WebApp (t3.micro)    │◄────┼────┼── HTTP
+    │  │  │                               │     │    │   Port 80
+    │  │  │  -  Nginx                      │     │    │
+    │  │  │  -  React (Static)             │     │    │
+    │  │  │  -  Express API                │     │    │
+    │  │  │  -  PM2                        │     │    │
+    │  │  │  -  CloudWatch Agent           │     │    │
+    │  │  │                               │     │    │
+    │  │  │  📍 3.222.153.54 (Elastic IP)│     │    │
+    │  │  └──────────┬────────────────────┘     │    │
+    │  │             │                          │    │
+    │  │  ┌──────────▼────────────┐            │    │
+    │  │  │  NAT Gateway           │            │    │
+    │  │  │  98.95.59.30           │            │    │
+    │  │  └────────────────────────┘            │    │
+    │  └────────────────────────────────────────┘    │
+    │             │                                   │
+    │             │ PostgreSQL (5432)                 │
+    │             ▼                                   │
+    │  ┌────────────────────────────────────────┐    │
+    │  │  Private Subnet (10.0.2.0/24)         │    │
+    │  │                                        │    │
+    │  │  ┌──────────────────────────────┐     │    │
+    │  │  │  🗄️ EC2 Database (t3.micro)  │     │    │
+    │  │  │                               │     │    │
+    │  │  │  -  PostgreSQL 15              │     │    │
+    │  │  │  -  No Public IP               │     │    │
+    │  │  │  -  VPC Access Only            │     │    │
+    │  │  │                               │     │    │
+    │  │  │  📍 10.0.2.217 (Private)      │     │    │
+    │  │  └───────────────────────────────┘     │    │
+    │  └────────────────────────────────────────┘    │
+    └─────────────────────────────────────────────────┘
+                     │
+                     ▼
+          ┌──────────────────┐
+          │  CloudWatch      │
+          │  -  Logs          │
+          │  -  Metrics       │
+          │  -  Alarms        │
+          └────────┬─────────┘
+                   │
+                   ▼
+          ┌──────────────────┐
+          │  SNS Topic       │
+          │  📧 Email Alerts │
+          └──────────────────┘
+
+### Composants Déployés
+
+| Composant | Configuration | Description |
+|-----------|---------------|-------------|
+| **VPC** | `vpc-0d4332ca74f57df1c` | Réseau privé (10.0.0.0/16) |
+| **WebApp** | EC2 t3.micro | Nginx + React + Express (3.222.153.54) |
+| **Database** | EC2 t3.micro | PostgreSQL 15 (10.0.2.217 - privé) |
+| **NAT Gateway** | Elastic IP | Internet sortant pour subnet privé (98.95.59.30) |
+| **CloudWatch** | Logs + Metrics | Monitoring et logs centralisés |
+| **SNS** | Email | Alertes (CPU > 70%, Memory > 80%) |
+
+### Flux de Données
+
+User → Nginx (Port 80) → React (Static Files)
+└→ Express API (Port 3000) → PostgreSQL (Port 5432)
+
+text
+
+---
+
+## 🚀 Instructions de Déploiement
+
+### Prérequis
+
+- Compte AWS avec permissions EC2, VPC, CloudFormation, CloudWatch, SNS
+- EC2 Key Pair créée (ex: `taskflow-key`)
+- Compte GitHub
+
+### Étape 1: Configuration
+
+**1.1 Créer EC2 Key Pair**
+
+aws ec2 create-key-pair
+--key-name taskflow-key
+--query 'KeyMaterial'
+--output text > taskflow-key.pem
+
+chmod 400 taskflow-key.pem
+
+text
+
+**1.2 Fork et Clone**
+
+Fork le repository sur GitHub
+Puis clone localement
+git clone https://github.com/VOTRE-USERNAME/taskflow-devops-project.git
+cd taskflow-devops-project
+
+text
+
+**1.3 Configurer les Secrets GitHub**
+
+Aller dans: `Repository → Settings → Secrets and variables → Actions`
+
+Créer **6 secrets**:
+
+| Secret | Valeur |
+|--------|--------|
+| `AWS_ACCESS_KEY_ID` | Votre AWS Access Key |
+| `AWS_SECRET_ACCESS_KEY` | Votre AWS Secret Key |
+| `EC2_KEY_NAME` | `taskflow-key` |
+| `EC2_SSH_KEY` | Contenu complet du fichier taskflow-key.pem |
+| `SNS_EMAIL` | Votre email pour les alertes |
+| `DB_PASSWORD` | Mot de passe PostgreSQL (8+ caractères) |
+
+### Étape 2: Déployer
+
+**Option A: Automatique (Push)**
+
+git commit --allow-empty -m "Deploy to AWS"
+git push origin main
+
+text
+
+**Option B: Manuel**
+
+GitHub → Actions → "AWS CI/CD Pipeline" → Run workflow
+
+### Étape 3: Suivre le Déploiement
+
+- **Durée:** 15-20 minutes
+- **GitHub Actions:** Suivre la progression dans l'onglet Actions
+- **Phases:** CI (build/test) puis CD (deploy infrastructure + app)
+
+### Étape 4: Accéder à l'Application
+
+Après déploiement réussi, récupérer l'URL dans les logs GitHub Actions:
+
+🌐 WebApp URL: http://3.222.153.54
+
+text
+
+**Vérifier:**
+
+curl http://3.222.153.54/api/health
+
+{"status":"healthy","database":"connected"}
+text
+
+### Étape 5: Confirmer SNS
+
+- Vérifier votre email
+- Cliquer sur "Confirm subscription" dans l'email AWS
+
+---
+
+## 🔄 Pipeline CI/CD
+
+### Vue d'Ensemble
+**Déclencheur:** Push sur la branche `main`
+
+B --> C{CI Success?}
+C -->|❌ Failed| D[❌ Stop Pipeline]
+C -->|✅ Success| E[Phase CD: Deploy to AWS]
+
+subgraph "Phase CI - 3-5 minutes"
+    B1[1. Checkout code]
+    B2[2. Setup Node.js 20]
+    B3[3. Install backend dependencies]
+    B4[4. Install frontend dependencies]
+    B5[5. Build frontend Vite]
+    B6[6. Validate CloudFormation]
+    B1 --> B2 --> B3 --> B4 --> B5 --> B6
+end
+
+E --> F[1. Configure AWS credentials]
+F --> G[2. Deploy CloudFormation Stack]
+
+subgraph "Infrastructure Deployment - 10-12 min"
+    G1[Create VPC & Subnets]
+    G2[Launch EC2 instances]
+    G3[Setup CloudWatch]
+    G4[Configure SNS]
+    G1 --> G2 --> G3 --> G4
+end
+
+G --> H[3. Wait for stack complete]
+H --> I[4. Get stack outputs IPs]
+I --> J[5. Deploy application code]
+
+subgraph "Application Deployment - 2-3 min"
+    J1[SSH to WebApp]
+    J2[Clone repository]
+    J3[Build & start with PM2]
+    J4[Configure Nginx]
+    J1 --> J2 --> J3 --> J4
+end
+
+J --> K[6. Initialize database]
+K --> L[7. Health check]
+L --> M{Deployment Success?}
+M -->|❌ Failed| N[❌ Rollback]
+M -->|✅ Success| O[🎉 Application Live]
+O --> P[📱 http://3.222.153.54]
+
+style A fill:#4CAF50,stroke:#333,stroke-width:2px,color:#fff
+style O fill:#4CAF50,stroke:#333,stroke-width:2px,color:#fff
+style P fill:#2196F3,stroke:#333,stroke-width:2px,color:#fff
+style D fill:#f44336,stroke:#333,stroke-width:2px,color:#fff
+style N fill:#f44336,stroke:#333,stroke-width:2px,color:#fff
+
+
+### Workflow: `.github/workflows/deploy.yml`
+
+**Déclencheurs:**
+- `push` sur branch `main` → CI + CD complet
+- `pull_request` vers `main` → CI uniquement
+- `workflow_dispatch` → Déclenchement manuel
+
+**Job 1: CI (build-and-test)**
+
+Checkout repository
+
+Setup Node.js 20
+
+Install backend dependencies (npm ci)
+
+Install frontend dependencies (npm ci)
+
+Build frontend (npm run build → client/dist/)
+
+Validate CloudFormation template
+
+text
+
+**Job 2: CD (deploy)** - Si CI réussi et branch = main
+
+Configure AWS credentials (secrets)
+
+Deploy CloudFormation stack:
+Stack name: taskflow-cicd-project
+Template: infrastructure.yml
+Parameters: KeyName, EmailAddress, DBPassword
+Capabilities: CAPABILITY_IAM
+
+Wait for stack: CREATE_COMPLETE
+
+Get outputs: WebAppIP, DBPrivateIP
+
+Wait for EC2 instances: running
+
+Deploy application:
+
+SSH to WebApp instance
+
+Clone repo in /opt/webapp
+
+Create .env with DB credentials
+
+Run deploy.sh script
+
+Start backend with PM2
+
+Initialize database:
+
+Upload db/init.sql
+
+Execute via psql
+
+Health check: curl /api/health
+
+Display deployment summary
+
+text
+
+### Suivi du Déploiement
+
+**GitHub Actions:**
+Repository → Actions → Workflow run en cours
+├─ build-and-test ✓
+└─ deploy ⏳
+└─ Voir logs en temps réel
+
+text
+
+**En cas d'échec:**
+- Consulter les logs détaillés dans GitHub Actions
+- Vérifier les secrets configurés
+- Vérifier les quotas AWS (Elastic IPs, VPCs)
+- Re-run le workflow si nécessaire
+
+---
+
+## 📝 Utilisation
+
+### Accéder à l'Application
+
+🌐 **URL:** `http://3.222.153.54`
+
+### Interface
+
+**Dashboard** - Statistiques temps réel
+- Total des tâches
+- Tâches complétées
+- Tâches en attente
+- Nombre de projets
+
+**Tasks** - Gestion des tâches
+- Créer une tâche (titre, description, projet optionnel)
+- Marquer comme complétée (checkbox)
+- Filtrer: All / Pending / Completed
+- Supprimer
+
+**Projects** - Gestion des projets
+- Créer un projet
+- Voir progression (barre de progression automatique)
+- Assigner des tâches
+
+### API REST
+
+**Base URL:** `http://3.222.153.54/api`
+
+Health check
+GET /api/health
+
+Statistics
+GET /api/stats
+
+Tasks
+GET /api/tasks
+POST /api/tasks
+PUT /api/tasks/:id
+DELETE /api/tasks/:id
+
+Projects
+GET /api/projects
+POST /api/projects
+DELETE /api/projects/:id
+
+Activity log
+GET /api/activity
+
+text
+
+**Exemple:**
+
+Créer une tâche
+curl -X POST http://3.222.153.54/api/tasks
+-H "Content-Type: application/json"
+-d '{
+"title": "Nouvelle tâche",
+"description": "Description"
+}'
+
+Lister les tâches
+curl http://3.222.153.54/api/tasks
+
+text
+
+### SSH
+
+WebApp
+ssh -i taskflow-key.pem ec2-user@3.222.153.54
+
+Database (via WebApp)
+ssh -i taskflow-key.pem
+-J ec2-user@3.222.153.54
+ec2-user@10.0.2.217
+
+text
+
+---
+
+## 📊 Monitoring
+
+### CloudWatch
+
+**Logs:** `/aws/ec2/webapp`
+- `nginx-access` - Requêtes HTTP
+- `nginx-error` - Erreurs serveur
+- `user-data` - Logs de démarrage
+
+**Métriques:**
+- CPU Utilization (AWS/EC2)
+- Memory Used (WebApp/Performance)
+- Network In/Out
+
+**Alarmes:**
+- High CPU (> 70%) → Email SNS
+- High Memory (> 80%) → Email SNS
+
+### Tester les Alertes
+
+SSH to WebApp
+ssh -i taskflow-key.pem ec2-user@3.222.153.54
+
+Generate CPU load
+yes > /dev/null &
+yes > /dev/null &
+yes > /dev/null &
+
+Wait 5-10 minutes → Email alert received
+Stop
+killall yes
+
+text
+
+---
+
+## 🗑️ Nettoyage
+
+### Supprimer l'Infrastructure
+
+Delete CloudFormation stack
+aws cloudformation delete-stack
+--stack-name taskflow-cicd-project
+
+Wait for deletion
+aws cloudformation wait stack-delete-complete
+--stack-name taskflow-cicd-project
+
+text
+
+**Ou via Console AWS:**
+CloudFormation → Stacks → taskflow-cicd-project → Delete
+
+text
+
+---
+
+## 💰 Coûts Estimés
+
+| Service | Coût/mois |
+|---------|-----------|
+| EC2 (2x t3.micro) | $15.18 |
+| NAT Gateway | $32.85 |
+| CloudWatch | $3.30 |
+| Autres | $2.63 |
+| **Total** | **~$54/mois** |
+
+**Optimisation:** Utiliser NAT Instance au lieu de NAT Gateway (économie $25/mois)
+
+---
+
+## 📚 Documentation
+
+- [AWS CloudFormation](https://docs.aws.amazon.com/cloudformation/)
+- [GitHub Actions](https://docs.github.com/actions)
+- [React Documentation](https://react.dev)
+- [Express.js](https://expressjs.com)
+- [PostgreSQL](https://postgresql.org/docs/)
+
+---
+
+## 👤 Auteur
+
+**Hamza El Alamy**  
+Formation DevOps 2025  
+GitHub: [@hamzaelalamy](https://github.com/hamzaelalamy)
+
+---
+
+## ⭐ Fonctionnalités du Projet
+
+✅ Application full-stack (React + Express + PostgreSQL)  
+✅ Infrastructure AWS complète (VPC, EC2, CloudWatch, SNS)  
+✅ Infrastructure as Code (CloudFormation)  
+✅ Pipeline CI/CD automatisé (GitHub Actions)  
+✅ Monitoring et alerting opérationnels  
+✅ Isolation réseau (subnet privé pour database)  
+✅ Documentation technique complète  
+
+**🚀 Projet prêt pour démonstration et évaluation!**
