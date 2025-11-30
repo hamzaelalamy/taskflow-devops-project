@@ -262,6 +262,9 @@ jobs:
             echo "🔧 Updating backend..."
             cd /opt/webapp
             
+            # Fix ownership first to avoid permission issues
+            sudo chown -R ec2-user:ec2-user /opt/webapp 2>/dev/null || true
+            
             # Remove old backend (keep backup)
             if [ -d "server" ]; then
               rm -rf server-backup
@@ -270,7 +273,6 @@ jobs:
             
             # Copy new backend
             cp -r /tmp/deploy-new/server ./
-            chown -R ec2-user:ec2-user server
             
             # Install backend dependencies
             cd server
@@ -317,7 +319,6 @@ jobs:
             # Copy new frontend
             mkdir -p client/dist
             cp -r /tmp/deploy-new/client/dist/* client/dist/
-            chown -R ec2-user:ec2-user client/dist
             
             echo "✅ Frontend files updated:"
             ls -la client/dist/
