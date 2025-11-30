@@ -203,13 +203,39 @@ jobs:
 
       - name: Package application
         run: |
-          mkdir -p deploy-package
-          cp -r server deploy-package/
-          cp -r client/dist deploy-package/client/
-          if [ -f db/init.sql ]; then
+          echo "📦 Packaging application..."
+          mkdir -p deploy-package/server
+          mkdir -p deploy-package/client/dist
+          
+          # Copy backend
+          cp -r server/* deploy-package/server/
+          
+          # Copy frontend build - FIXED: Check if dist exists and copy contents
+          if [ -d "client/dist" ]; then
+            echo "✅ Found client/dist, copying contents..."
+            cp -r client/dist/* deploy-package/client/dist/
+            ls -la deploy-package/client/dist/
+          else
+            echo "❌ ERROR: client/dist not found!"
+            echo "Available client directories:"
+            ls -la client/
+            exit 1
+          fi
+          
+          # Copy database init if exists
+          if [ -f "db/init.sql" ]; then
             cp db/init.sql deploy-package/
           fi
+          
+          echo "📋 Package contents:"
+          ls -la deploy-package/
+          echo "Frontend files:"
+          ls -la deploy-package/client/dist/ | head -10
+          
+          # Create tarball
           tar -czf taskflow-app.tar.gz -C deploy-package .
+          
+          echo "✅ Package created: $(du -h taskflow-app.tar.gz)"
 
       - name: Deploy application to EC2
         env:
@@ -252,6 +278,16 @@ jobs:
             
             echo "✅ Extracted files:"
             ls -la /tmp/deploy-new
+            echo "Frontend files in package:"
+            ls -la /tmp/deploy-new/client/dist/ 2>/dev/null || echo "⚠️ No dist directory found!"
+            
+            # Verify frontend files exist
+            if [ ! -d "/tmp/deploy-new/client/dist" ] || [ -z "$(ls -A /tmp/deploy-new/client/dist)" ]; then
+              echo "❌ ERROR: Frontend dist directory is missing or empty!"
+              echo "Package structure:"
+              find /tmp/deploy-new -type f
+              exit 1
+            fi
             
             # Stop PM2 before updating files
             echo "🛑 Stopping running application..."
@@ -316,13 +352,29 @@ jobs:
               mv client/dist client/dist-backup
             fi
             
-            # Copy new frontend
+            # Create client directory if it doesn't exist
             mkdir -p client/dist
-            cp -r /tmp/deploy-new/client/dist/* client/dist/
+            
+            # Copy new frontend - FIXED: Copy contents without wildcard issues
+            echo "Copying frontend files..."
+            cp -r /tmp/deploy-new/client/dist/* client/dist/ 2>/dev/null || {
+              # Fallback: try without hidden files first
+              cp -r /tmp/deploy-new/client/dist/. client/dist/ 2>/dev/null || {
+                echo "❌ Failed to copy frontend files"
+                exit 1
+              }
+            }
             
             echo "✅ Frontend files updated:"
             ls -la client/dist/
-            echo "Timestamp: $(stat -c %y client/dist/index.html)"
+            echo "File count: $(find client/dist -type f | wc -l)"
+            
+            # Verify critical files exist
+            if [ ! -f "client/dist/index.html" ]; then
+              echo "⚠️ WARNING: index.html not found in dist!"
+            else
+              echo "Timestamp: $(stat -c %y client/dist/index.html)"
+            fi
             
             # Restart Nginx
             echo "🔄 Restarting Nginx..."
@@ -340,8 +392,10 @@ jobs:
             echo ""
             echo "📊 Deployment Info:"
             echo "Backend Entry: $ENTRY_POINT"
-            echo "Frontend Files: $(ls client/dist | wc -l)"
-            echo "Frontend Updated: $(stat -c %y client/dist/index.html)"
+            echo "Frontend Files: $(find client/dist -type f | wc -l)"
+            if [ -f "client/dist/index.html" ]; then
+              echo "Frontend Updated: $(stat -c %y client/dist/index.html)"
+            fi
           ENDSSH
           
           echo "✅ Application deployed to EC2"
