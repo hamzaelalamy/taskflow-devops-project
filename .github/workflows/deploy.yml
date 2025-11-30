@@ -427,8 +427,23 @@ jobs:
             # Start backend with PM2
             echo ""
             echo "🔄 Starting backend with PM2..."
-            pm2 start $ENTRY_POINT --name taskflow-api --env production
+            
+            # Verify .env one more time before starting
+            echo "Environment variables that will be used:"
+            cat .env
+            
+            # Start with explicit environment
+            pm2 start $ENTRY_POINT \
+              --name taskflow-api \
+              --env production \
+              --update-env
+            
             pm2 save
+            
+            # Show PM2 environment
+            echo ""
+            echo "PM2 Environment for taskflow-api:"
+            pm2 env 0
             
             # Wait for backend to start
             sleep 5
