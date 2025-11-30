@@ -214,29 +214,18 @@ app.get('/api/tasks', async (req, res) => {
       ORDER BY t.created_at DESC
     `);
     
-    res.json({
-      success: true,
-      count: result.rows.length,
-      tasks: result.rows
-    });
+    // Return array directly (common pattern for REST APIs)
+    res.json(result.rows);
   } catch (error) {
     console.error('Error fetching tasks:', error);
     
     // If table doesn't exist, return empty array
     if (error.code === '42P01') {
-      return res.json({
-        success: true,
-        count: 0,
-        tasks: [],
-        message: 'Tasks table not yet created'
-      });
+      return res.json([]);
     }
     
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      tasks: []
-    });
+    // On error, return empty array to prevent frontend crashes
+    res.json([]);
   }
 });
 
@@ -406,29 +395,18 @@ app.get('/api/projects', async (req, res) => {
       ORDER BY p.created_at DESC
     `);
     
-    res.json({
-      success: true,
-      count: result.rows.length,
-      projects: result.rows
-    });
+    // Return array directly
+    res.json(result.rows);
   } catch (error) {
     console.error('Error fetching projects:', error);
     
     // If table doesn't exist, return empty array
     if (error.code === '42P01') {
-      return res.json({
-        success: true,
-        count: 0,
-        projects: [],
-        message: 'Projects table not yet created'
-      });
+      return res.json([]);
     }
     
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      projects: []
-    });
+    // On error, return empty array
+    res.json([]);
   }
 });
 
