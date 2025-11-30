@@ -215,7 +215,6 @@ jobs:
         env:
           WEBAPP_IP: ${{ steps.stack-outputs.outputs.webapp_ip }}
           EC2_KEY: ${{ secrets.EC2_PRIVATE_KEY }}
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
           echo "🚀 Deploying application to EC2..."
           
@@ -242,22 +241,42 @@ jobs:
           ssh -i ~/.ssh/deploy_key.pem -o StrictHostKeyChecking=no ec2-user@$WEBAPP_IP bash << 'ENDSSH'
             set -e
             
-            echo "📁 Setting up application directory..."
+            echo "📁 Preparing deployment..."
+            
+            # Extract to temporary directory
+            rm -rf /tmp/deploy-new
+            mkdir -p /tmp/deploy-new
+            
+            echo "📦 Extracting application package..."
+            tar -xzf /tmp/taskflow-app.tar.gz -C /tmp/deploy-new
+            
+            echo "✅ Extracted files:"
+            ls -la /tmp/deploy-new
+            
+            # Stop PM2 before updating files
+            echo "🛑 Stopping running application..."
+            pm2 stop taskflow-api 2>/dev/null || true
+            pm2 delete taskflow-api 2>/dev/null || true
+            
+            # Update backend
+            echo "🔧 Updating backend..."
             cd /opt/webapp
             
-            if [ -d "server" ] || [ -d "client" ]; then
-              echo "💾 Backing up previous deployment..."
-              sudo rm -rf /opt/webapp-backup 2>/dev/null || true
-              sudo cp -r /opt/webapp /opt/webapp-backup 2>/dev/null || true
+            # Remove old backend (keep backup)
+            if [ -d "server" ]; then
+              rm -rf server-backup
+              mv server server-backup
             fi
             
-            echo "📦 Extracting new application..."
-            tar -xzf /tmp/taskflow-app.tar.gz
+            # Copy new backend
+            cp -r /tmp/deploy-new/server ./
+            chown -R ec2-user:ec2-user server
             
-            echo "📦 Installing backend dependencies..."
+            # Install backend dependencies
             cd server
             npm install --production
             
+            # Detect entry point
             if [ -f "package.json" ]; then
               ENTRY_POINT=$(node -p "try { require('./package.json').main } catch(e) { 'index.js' }")
             else
@@ -280,26 +299,48 @@ jobs:
             
             echo "✅ Using entry point: $ENTRY_POINT"
             
-            echo "🔄 Restarting backend with PM2..."
-            pm2 stop taskflow-api 2>/dev/null || true
-            pm2 delete taskflow-api 2>/dev/null || true
+            # Start backend with PM2
+            echo "🔄 Starting backend with PM2..."
             pm2 start $ENTRY_POINT --name taskflow-api --env production
             pm2 save
             
-            cd ..
-            
+            # Update frontend
             echo "🎨 Updating frontend..."
-            sudo cp -r client/dist/* /opt/webapp/client/dist/ 2>/dev/null || true
+            cd /opt/webapp
             
+            # Remove old frontend dist
+            if [ -d "client/dist" ]; then
+              rm -rf client/dist-backup
+              mv client/dist client/dist-backup
+            fi
+            
+            # Copy new frontend
+            mkdir -p client/dist
+            cp -r /tmp/deploy-new/client/dist/* client/dist/
+            chown -R ec2-user:ec2-user client/dist
+            
+            echo "✅ Frontend files updated:"
+            ls -la client/dist/
+            echo "Timestamp: $(stat -c %y client/dist/index.html)"
+            
+            # Restart Nginx
             echo "🔄 Restarting Nginx..."
             sudo systemctl restart nginx
             
+            # Cleanup
+            rm -rf /tmp/deploy-new
             rm /tmp/taskflow-app.tar.gz
             
+            echo ""
             echo "✅ Deployment completed successfully!"
             echo ""
             echo "📊 PM2 Status:"
             pm2 list
+            echo ""
+            echo "📊 Deployment Info:"
+            echo "Backend Entry: $ENTRY_POINT"
+            echo "Frontend Files: $(ls client/dist | wc -l)"
+            echo "Frontend Updated: $(stat -c %y client/dist/index.html)"
           ENDSSH
           
           echo "✅ Application deployed to EC2"
