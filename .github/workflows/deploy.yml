@@ -155,7 +155,6 @@ jobs:
     timeout-minutes: 15
     environment:
       name: production
-      url: http://${{ secrets.EC2_HOST }}:3000
     
     steps:
       - name: Install SSH Key
@@ -279,6 +278,11 @@ jobs:
               exit 1
             fi
           ENDSSH
+      
+      - name: Output deployment URL
+        run: |
+          echo "🌐 Application deployed at: http://${{ secrets.EC2_HOST }}:3000"
+          echo "📊 Check health at: http://${{ secrets.EC2_HOST }}:3000/health"
       
       - name: Notify deployment status
         if: always()
